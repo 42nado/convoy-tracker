@@ -5,8 +5,43 @@ import {
   type ConvoyStatus,
   type MemberState,
   type LocationRow,
+  type LatLng,
 } from "./db";
 import { newConvoyCode, newSecretToken } from "./ids";
+
+export interface ConvoyPins {
+  meetup: LatLng | null;
+  destination: LatLng | null;
+}
+
+function pinsFromRow(row: ConvoyRow): ConvoyPins {
+  const meetup =
+    row.meetup_lat !== null && row.meetup_lng !== null
+      ? { lat: row.meetup_lat, lng: row.meetup_lng }
+      : null;
+  const destination =
+    row.dest_lat !== null && row.dest_lng !== null ? { lat: row.dest_lat, lng: row.dest_lng } : null;
+  return { meetup, destination };
+}
+
+export function setPins(
+  convoyId: number,
+  patch: { meetup?: LatLng | null; destination?: LatLng | null },
+): void {
+  const sets: string[] = [];
+  const values: (number | null)[] = [];
+  if (patch.meetup !== undefined) {
+    sets.push("meetup_lat = ?", "meetup_lng = ?");
+    values.push(patch.meetup?.lat ?? null, patch.meetup?.lng ?? null);
+  }
+  if (patch.destination !== undefined) {
+    sets.push("dest_lat = ?", "dest_lng = ?");
+    values.push(patch.destination?.lat ?? null, patch.destination?.lng ?? null);
+  }
+  if (sets.length === 0) return;
+  values.push(convoyId);
+  db().prepare(`UPDATE convoys SET ${sets.join(", ")} WHERE id = ?`).run(...values);
+}
 
 export function createConvoy(input: {
   title: string;
@@ -201,6 +236,7 @@ export interface PublicConvoyView {
   meetup_place: string;
   destination: string;
   status: ConvoyStatus;
+  pins: ConvoyPins;
   approved: PublicMember[];
   approvedCount: number;
 }
@@ -223,6 +259,7 @@ export function publicViewForCode(code: string): PublicConvoyView | null {
     meetup_place: convoy.meetup_place,
     destination: convoy.destination,
     status: convoy.status,
+    pins: pinsFromRow(convoy),
     approved,
     approvedCount: approved.length,
   };
@@ -250,6 +287,7 @@ export function adminViewForToken(token: string): AdminConvoyView | null {
     meetup_place: convoy.meetup_place,
     destination: convoy.destination,
     status: convoy.status,
+    pins: pinsFromRow(convoy),
     approved,
     approvedCount: approved.length,
     pending,

@@ -24,6 +24,10 @@ function init(db: Database.Database) {
       meetup_at     TEXT NOT NULL,
       meetup_place  TEXT NOT NULL,
       destination   TEXT NOT NULL,
+      meetup_lat    REAL,
+      meetup_lng    REAL,
+      dest_lat      REAL,
+      dest_lng      REAL,
       status        TEXT NOT NULL DEFAULT 'planned',
       created_at    TEXT NOT NULL DEFAULT (datetime('now')),
       closed_at     TEXT
@@ -53,9 +57,16 @@ function init(db: Database.Database) {
   `);
 
   // Idempotent migration: add is_leader column on pre-existing members tables.
-  const cols = db.prepare("PRAGMA table_info(members)").all() as Array<{ name: string }>;
-  if (!cols.some((c) => c.name === "is_leader")) {
+  const memberCols = db.prepare("PRAGMA table_info(members)").all() as Array<{ name: string }>;
+  if (!memberCols.some((c) => c.name === "is_leader")) {
     db.exec("ALTER TABLE members ADD COLUMN is_leader INTEGER NOT NULL DEFAULT 0");
+  }
+
+  // Idempotent migration: add geographic pin columns to convoys.
+  const convoyCols = db.prepare("PRAGMA table_info(convoys)").all() as Array<{ name: string }>;
+  const have = new Set(convoyCols.map((c) => c.name));
+  for (const col of ["meetup_lat", "meetup_lng", "dest_lat", "dest_lng"]) {
+    if (!have.has(col)) db.exec(`ALTER TABLE convoys ADD COLUMN ${col} REAL`);
   }
 }
 
@@ -79,9 +90,18 @@ export interface ConvoyRow {
   meetup_at: string;
   meetup_place: string;
   destination: string;
+  meetup_lat: number | null;
+  meetup_lng: number | null;
+  dest_lat: number | null;
+  dest_lng: number | null;
   status: ConvoyStatus;
   created_at: string;
   closed_at: string | null;
+}
+
+export interface LatLng {
+  lat: number;
+  lng: number;
 }
 
 export interface MemberRow {

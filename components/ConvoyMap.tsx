@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import type { LatLng } from "@/lib/db";
 
 export interface MapLocation {
   memberId: number;
@@ -14,9 +15,20 @@ export interface MapLocation {
   ageSec: number;
 }
 
+export interface RouteOverlay {
+  /** Unique key so we can replace overlays without flicker. */
+  id: string;
+  points: [number, number][];
+  color: string;
+  dashed?: boolean;
+}
+
 interface Props {
   locations: MapLocation[];
   selfMemberId: number | null;
+  meetup?: LatLng | null;
+  destination?: LatLng | null;
+  routes?: RouteOverlay[];
 }
 
 function initials(name: string): string {
@@ -53,11 +65,37 @@ function makeIcon(loc: MapLocation, isSelf: boolean): L.DivIcon {
   });
 }
 
-export default function ConvoyMap({ locations, selfMemberId }: Props) {
+function placeIcon(kind: "meetup" | "destination"): L.DivIcon {
+  const isMeetup = kind === "meetup";
+  const bg = isMeetup ? "#0f172a" : "#f97316";
+  const emoji = isMeetup ? "🚩" : "🏁";
+  return L.divIcon({
+    className: "",
+    html: `<div style="
+      display:flex;align-items:center;justify-content:center;
+      width:34px;height:34px;border-radius:50% 50% 50% 0;
+      background:${bg};color:#fff;border:2px solid #fff;
+      transform:rotate(-45deg);box-shadow:0 2px 8px rgba(0,0,0,0.3);
+    "><span style="transform:rotate(45deg);font-size:14px;line-height:1">${emoji}</span></div>`,
+    iconSize: [34, 34],
+    iconAnchor: [17, 34],
+  });
+}
+
+export default function ConvoyMap({
+  locations,
+  selfMemberId,
+  meetup,
+  destination,
+  routes,
+}: Props) {
   const mapElRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<L.Map | null>(null);
   const markersRef = useRef<Map<number, L.Marker>>(new Map());
   const accuracyRef = useRef<Map<number, L.Circle>>(new Map());
+  const meetupMarkerRef = useRef<L.Marker | null>(null);
+  const destMarkerRef = useRef<L.Marker | null>(null);
+  const routeLayersRef = useRef<Map<string, L.Polyline>>(new Map());
   const fittedRef = useRef(false);
 
   // Init map once
@@ -79,9 +117,70 @@ export default function ConvoyMap({ locations, selfMemberId }: Props) {
       mapRef.current = null;
       markersRef.current.clear();
       accuracyRef.current.clear();
+      meetupMarkerRef.current = null;
+      destMarkerRef.current = null;
+      routeLayersRef.current.clear();
       fittedRef.current = false;
     };
   }, []);
+
+  // Sync meetup / destination pins
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const sync = (
+      pin: LatLng | null | undefined,
+      ref: React.RefObject<L.Marker | null>,
+      kind: "meetup" | "destination",
+      label: string,
+    ) => {
+      if (pin) {
+        if (ref.current) {
+          ref.current.setLatLng([pin.lat, pin.lng]);
+        } else {
+          const m = L.marker([pin.lat, pin.lng], { icon: placeIcon(kind), interactive: true })
+            .addTo(map)
+            .bindPopup(`<b>${label}</b>`);
+          ref.current = m;
+        }
+      } else if (ref.current) {
+        ref.current.remove();
+        ref.current = null;
+      }
+    };
+    sync(meetup, meetupMarkerRef, "meetup", "Meetup");
+    sync(destination, destMarkerRef, "destination", "Destination");
+  }, [meetup, destination]);
+
+  // Sync route overlays
+  useEffect(() => {
+    const map = mapRef.current;
+    if (!map) return;
+    const incoming = new Map((routes ?? []).map((r) => [r.id, r] as const));
+    // Remove dropped
+    for (const [id, layer] of routeLayersRef.current) {
+      if (!incoming.has(id)) {
+        layer.remove();
+        routeLayersRef.current.delete(id);
+      }
+    }
+    // Add or update
+    for (const [id, r] of incoming) {
+      const existing = routeLayersRef.current.get(id);
+      if (existing) {
+        existing.setLatLngs(r.points);
+        existing.setStyle({ color: r.color, dashArray: r.dashed ? "8 6" : undefined });
+      } else {
+        const layer = L.polyline(r.points, {
+          color: r.color,
+          weight: 5,
+          opacity: 0.85,
+          dashArray: r.dashed ? "8 6" : undefined,
+        }).addTo(map);
+        routeLayersRef.current.set(id, layer);
+      }
+    }
+  }, [routes]);
 
   // Sync markers
   useEffect(() => {
@@ -142,13 +241,18 @@ export default function ConvoyMap({ locations, selfMemberId }: Props) {
       }
     }
 
-    // Fit bounds once we first have locations
-    if (locations.length > 0 && !fittedRef.current) {
-      const bounds = L.latLngBounds(locations.map((l) => [l.lat, l.lng] as L.LatLngTuple));
-      map.fitBounds(bounds.pad(0.2), { maxZoom: 15 });
-      fittedRef.current = true;
+    // Fit bounds once we first have *anything* worth fitting to
+    if (!fittedRef.current) {
+      const pts: L.LatLngTuple[] = locations.map((l) => [l.lat, l.lng]);
+      if (meetup) pts.push([meetup.lat, meetup.lng]);
+      if (destination) pts.push([destination.lat, destination.lng]);
+      if (pts.length > 0) {
+        const bounds = L.latLngBounds(pts);
+        map.fitBounds(bounds.pad(0.2), { maxZoom: 15 });
+        fittedRef.current = true;
+      }
     }
-  }, [locations, selfMemberId]);
+  }, [locations, selfMemberId, meetup, destination]);
 
   return <div ref={mapElRef} className="h-72 w-full rounded-xl overflow-hidden border border-slate-200" />;
 }

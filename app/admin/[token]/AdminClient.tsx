@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import dynamic from "next/dynamic";
 import { formatMeetup, statusLabel } from "@/lib/format";
 import type { AdminConvoyView } from "@/lib/queries";
+import type { LatLng } from "@/lib/db";
 import type { MapLocation } from "@/components/ConvoyMap";
 
 const ConvoyMap = dynamic(() => import("@/components/ConvoyMap"), {
@@ -16,6 +17,7 @@ const ConvoyMap = dynamic(() => import("@/components/ConvoyMap"), {
 });
 
 const QRCard = dynamic(() => import("@/components/QRCard"), { ssr: false });
+const PinPicker = dynamic(() => import("@/components/PinPicker"), { ssr: false });
 
 interface Props {
   initialView: AdminConvoyView;
@@ -26,6 +28,9 @@ export default function AdminClient({ initialView }: Props) {
   const [refreshing, setRefreshing] = useState(false);
   const [editing, setEditing] = useState(false);
   const [locations, setLocations] = useState<MapLocation[]>([]);
+  const [pinModal, setPinModal] = useState<"meetup" | "destination" | null>(null);
+  const [pinSaving, setPinSaving] = useState(false);
+  const [pinError, setPinError] = useState<string | null>(null);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -79,6 +84,32 @@ export default function AdminClient({ initialView }: Props) {
       alert(err.error ?? "Action failed");
     }
   }
+
+  async function savePin(kind: "meetup" | "destination", value: LatLng | null) {
+    setPinSaving(true);
+    setPinError(null);
+    try {
+      const body = kind === "meetup" ? { meetup: value } : { destination: value };
+      const res = await fetch(`/api/admin/${view.adminToken}/pins`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      if (!res.ok) {
+        const b = await res.json().catch(() => ({}));
+        throw new Error(b.error ?? `HTTP ${res.status}`);
+      }
+      setPinModal(null);
+      await refresh();
+    } catch (e) {
+      setPinError(e instanceof Error ? e.message : "Could not save pin");
+    } finally {
+      setPinSaving(false);
+    }
+  }
+
+  const hasPins = !!view.pins.meetup || !!view.pins.destination;
+  const showMap = view.status !== "closed" && (view.status === "active" || hasPins);
 
   const status = statusLabel(view.status);
   const joinUrl = typeof window === "undefined" ? "" : `${window.location.origin}/c/${view.code}`;
@@ -140,28 +171,107 @@ export default function AdminClient({ initialView }: Props) {
         onClearLeader={() => act("/leader", { memberId: null })}
       />
 
-      {view.status === "active" && (
+      {view.status !== "closed" && (
+        <div className="card space-y-3">
+          <p className="text-sm font-semibold text-slate-700">Map pins</p>
+          <p className="text-xs text-slate-500">
+            The leader can also set these. Pin a real location so everyone&apos;s map shows the same point.
+          </p>
+          <AdminPinRow
+            label="📍 Meetup point"
+            pin={view.pins.meetup}
+            onEdit={() => setPinModal("meetup")}
+          />
+          <AdminPinRow
+            label="🏁 Destination"
+            pin={view.pins.destination}
+            onEdit={() => setPinModal("destination")}
+          />
+          {pinError && (
+            <p className="rounded-md bg-red-50 px-2 py-1 text-xs text-red-700">{pinError}</p>
+          )}
+        </div>
+      )}
+
+      {showMap && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-slate-700">
-              Live map <span className="font-normal text-slate-500">({locations.length} sharing)</span>
+              {view.status === "active" ? "Live map" : "Map"}
+              {view.status === "active" && (
+                <span className="font-normal text-slate-500"> ({locations.length} sharing)</span>
+              )}
             </h2>
-            <button
-              onClick={refreshLocations}
-              className="text-xs text-slate-500 hover:text-slate-700"
-            >
-              Refresh
-            </button>
+            {view.status === "active" && (
+              <button
+                onClick={refreshLocations}
+                className="text-xs text-slate-500 hover:text-slate-700"
+              >
+                Refresh
+              </button>
+            )}
           </div>
-          <ConvoyMap locations={locations} selfMemberId={null} />
-          {locations.length === 0 && (
+          <ConvoyMap
+            locations={locations}
+            selfMemberId={null}
+            meetup={view.pins.meetup}
+            destination={view.pins.destination}
+          />
+          {view.status === "active" && locations.length === 0 && (
             <p className="text-xs text-slate-500">
               No riders are sharing yet. They&apos;ll see the &ldquo;Share my location&rdquo; button now that the ride is active.
             </p>
           )}
         </div>
       )}
+
+      {pinModal && (
+        <PinPicker
+          title={pinModal === "meetup" ? "Pin the meetup point" : "Pin the destination"}
+          hint={
+            pinModal === "meetup"
+              ? "Where everyone gathers before the ride."
+              : "Where the convoy is heading."
+          }
+          initial={pinModal === "meetup" ? view.pins.meetup : view.pins.destination}
+          onCancel={() => {
+            setPinModal(null);
+            setPinError(null);
+          }}
+          onSave={(value) => savePin(pinModal, value)}
+          allowClear
+          saving={pinSaving}
+        />
+      )}
     </section>
+  );
+}
+
+function AdminPinRow({
+  label,
+  pin,
+  onEdit,
+}: {
+  label: string;
+  pin: LatLng | null;
+  onEdit: () => void;
+}) {
+  return (
+    <div className="flex items-center justify-between gap-2">
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium text-slate-800">{label}</p>
+        {pin ? (
+          <p className="font-mono text-[11px] text-slate-500">
+            {pin.lat.toFixed(5)}, {pin.lng.toFixed(5)}
+          </p>
+        ) : (
+          <p className="text-xs text-slate-500">Not pinned yet</p>
+        )}
+      </div>
+      <button onClick={onEdit} className="btn-secondary px-3 py-1.5 text-xs">
+        {pin ? "Edit" : "Pin it"}
+      </button>
+    </div>
   );
 }
 

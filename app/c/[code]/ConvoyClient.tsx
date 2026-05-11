@@ -1,11 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import dynamic from "next/dynamic";
 import { formatMeetup, statusLabel } from "@/lib/format";
 import type { PublicConvoyView } from "@/lib/queries";
 import LocationSharePanel from "@/components/LocationSharePanel";
-import type { MapLocation } from "@/components/ConvoyMap";
+import type { MapLocation, RouteOverlay } from "@/components/ConvoyMap";
 
 const ConvoyMap = dynamic(() => import("@/components/ConvoyMap"), {
   ssr: false,
@@ -15,6 +15,7 @@ const ConvoyMap = dynamic(() => import("@/components/ConvoyMap"), {
     </div>
   ),
 });
+const LeaderControls = dynamic(() => import("@/components/LeaderControls"));
 
 type MeState = "pending" | "approved" | "denied" | "left";
 interface Me {
@@ -33,8 +34,17 @@ export default function ConvoyClient({ initialView, initialMe }: Props) {
   const [me, setMe] = useState<Me | null>(initialMe);
   const [refreshing, setRefreshing] = useState(false);
   const [locations, setLocations] = useState<MapLocation[]>([]);
+  const [leaderRoutes, setLeaderRoutes] = useState<RouteOverlay[]>([]);
 
   const isActiveMember = me?.state === "approved" && view.status === "active";
+
+  const myApprovedRecord = useMemo(
+    () => (me ? view.approved.find((a) => a.id === me.id) : undefined),
+    [me, view.approved],
+  );
+  const iAmLeader = myApprovedRecord?.isLeader === true;
+  const hasPins = !!view.pins.meetup || !!view.pins.destination;
+  const showMap = view.status !== "closed" && (isActiveMember || hasPins);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -121,23 +131,48 @@ export default function ConvoyClient({ initialView, initialMe }: Props) {
         <LocationSharePanel code={view.code} enabled={view.status === "active"} />
       )}
 
-      {isActiveMember && (
+      {iAmLeader && view.status !== "closed" && (
+        <LeaderControls
+          code={view.code}
+          pins={view.pins}
+          onPinsChanged={refresh}
+          onRoutesChange={setLeaderRoutes}
+        />
+      )}
+
+      {showMap && (
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-slate-700">
-              Live map <span className="font-normal text-slate-500">({locations.length} sharing)</span>
+              {isActiveMember ? "Live map" : "Map"}
+              {isActiveMember && (
+                <span className="font-normal text-slate-500"> ({locations.length} sharing)</span>
+              )}
             </h2>
-            <button
-              onClick={refreshLocations}
-              className="text-xs text-slate-500 hover:text-slate-700"
-            >
-              Refresh
-            </button>
+            {isActiveMember && (
+              <button
+                onClick={refreshLocations}
+                className="text-xs text-slate-500 hover:text-slate-700"
+              >
+                Refresh
+              </button>
+            )}
           </div>
-          <ConvoyMap locations={locations} selfMemberId={me.id} />
-          {locations.length === 0 && (
+          <ConvoyMap
+            locations={locations}
+            selfMemberId={me?.id ?? null}
+            meetup={view.pins.meetup}
+            destination={view.pins.destination}
+            routes={iAmLeader ? leaderRoutes : undefined}
+          />
+          {isActiveMember && locations.length === 0 && (
             <p className="text-xs text-slate-500">
               No one&apos;s sharing yet. Tap &ldquo;Share my location&rdquo; above to start the map.
+            </p>
+          )}
+          {!isActiveMember && hasPins && (
+            <p className="text-xs text-slate-500">
+              Live rider locations show up here once the creator marks the ride as &ldquo;Riding now&rdquo;.
             </p>
           )}
         </div>

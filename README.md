@@ -11,6 +11,7 @@ A dead-simple, mobile-first web app for small motorcycle friend groups (3–10 r
 5. Everyone with the join link sees the live roster, meetup info, and status.
 6. Creator marks the ride active when it starts, and closes it when it's done.
 7. **While the ride is active**, approved riders can opt-in to share their live location. Everyone in the convoy sees the others on a live map. Creator can designate one rider as the **leader** (highlighted on the map).
+8. The **leader** (and creator) can pin the real meetup point and destination on a map. The leader can preview two routes — *get me to the meetup* (from their current location) and *the convoy ride itself* (meetup → destination) — drawn as real road-following polylines.
 
 No accounts. No app store. Just the basics done right.
 
@@ -35,6 +36,7 @@ npm start
 - **SQLite** via [`better-sqlite3`](https://github.com/WiseLibs/better-sqlite3) — single-file DB at `data/convoy.db`, no setup
 - **Tailwind CSS** — utility classes + a few small component classes (`.btn-primary`, `.input`, `.card`) in `app/globals.css`
 - **Leaflet + OpenStreetMap** — live map (no API key, free tiles, dynamic-imported so it doesn't bloat the create page)
+- **OSRM public router** ([router.project-osrm.org](https://router.project-osrm.org)) — driving routes from GeoJSON, no API key. Straight-line haversine fallback if it's unreachable.
 
 ## Live location model
 
@@ -44,6 +46,17 @@ npm start
 - A location is considered "live" if updated in the last **5 minutes** — anything older is filtered out server-side, so stale pins disappear.
 - Sharing stops automatically when the convoy is closed or when the rider taps "Stop".
 - One member can be designated **leader** by the creator. The leader marker is highlighted on the map.
+
+## Map pins + route preview
+
+- The convoy's free-text **meetup place** and **destination** can be paired with optional **map pins** (real lat/lng).
+- **Who can pin:** the **leader** (via cookie + `is_leader=1` check) and the **creator** (via admin token). Both routes funnel into the same `setPins` query. Closed convoys are locked.
+- **Pin picker:** a tap-to-drop Leaflet mini-map in a modal. Tries to center on the user's current location (with permission), falls back to Manila. Pins are draggable for fine-tuning. Saving sends just `{ meetup }` or `{ destination }` as a partial patch — passing `null` clears a pin.
+- **Live map:** when pins exist, meetup (🚩) and destination (🏁) markers show on everyone's map alongside live rider locations.
+- **Leader-only route previews** (drawn as polylines on the live map):
+  - **🧭 Get to meetup** — your current location → meetup pin (dashed blue line)
+  - **🛣️ Preview convoy route** — meetup → destination (solid orange line, the actual ride path)
+- Routes are fetched from OSRM's public driving profile. The component shows distance and ETA when OSRM responds, falls back to a straight line + haversine distance otherwise.
 
 ## Project layout
 
@@ -67,18 +80,23 @@ app/
     convoys/[code]/join/route.ts           POST  request to join
     convoys/[code]/leave/route.ts          POST  leave / cancel request
     convoys/[code]/location/route.ts       POST  ping location · GET live locations (members)
+    convoys/[code]/pins/route.ts           POST  leader-only: set/clear meetup or destination pin
     admin/[token]/route.ts                 GET   admin view
     admin/[token]/approve/route.ts         POST  approve member
     admin/[token]/deny/route.ts            POST  deny pending request
     admin/[token]/kick/route.ts            POST  remove approved member
     admin/[token]/leader/route.ts          POST  set/clear leader
     admin/[token]/locations/route.ts       GET   live locations (creator view)
+    admin/[token]/pins/route.ts            POST  creator: set/clear meetup or destination pin
     admin/[token]/status/route.ts          POST  planned ↔ active → closed
     admin/[token]/convoy/route.ts          PATCH edit title/time/place/destination
 
 components/
-  ConvoyMap.tsx                       Leaflet map (client-only, dynamic-imported)
+  ConvoyMap.tsx                       Leaflet map: rider markers, meetup/dest pins, route polylines
   LocationSharePanel.tsx              opt-in geolocation share with permission flow
+  PinPicker.tsx                       modal tap-to-drop mini-map for picking a single LatLng
+  LeaderControls.tsx                  leader UI: pin meetup/dest + route previews
+  QRCard.tsx                          QR + share/copy/PNG controls for the join URL
 
 lib/
   db.ts                               sqlite connection + schema
@@ -90,10 +108,12 @@ lib/
 
 ## Data model
 
-Three tables, schema is idempotent (auto-creates on first request, adds `is_leader` column if upgrading from v0.1):
+Three tables, schema is idempotent — auto-creates on first request and runs `ALTER TABLE … ADD COLUMN` migrations for `members.is_leader` and `convoys.{meetup,dest}_{lat,lng}` if upgrading from an older version:
 
 ```sql
-convoys(id, code, admin_token, title, meetup_at, meetup_place, destination, status, created_at, closed_at)
+convoys(id, code, admin_token, title, meetup_at, meetup_place, destination,
+        meetup_lat, meetup_lng, dest_lat, dest_lng,
+        status, created_at, closed_at)
 members(id, convoy_id → convoys, name, token, state, is_leader, created_at)
 locations(member_id → members [PRIMARY KEY], lat, lng, accuracy, heading, speed, updated_at)
 ```
@@ -104,6 +124,7 @@ locations(member_id → members [PRIMARY KEY], lat, lng, accuracy, heading, spee
 - `members.state` — `pending` | `approved` | `denied` | `left`
 - `members.is_leader` — 0/1, at most one per convoy (set in a transaction)
 - `convoys.status` — `planned` | `active` | `closed`
+- `convoys.{meetup,dest}_{lat,lng}` — nullable real-world map pins paired with the free-text fields
 - `locations` — one row per member, upserted on each ping; rows are kept forever in the table but filtered out client-server after 5 minutes of staleness
 
 ## Identity model
@@ -124,10 +145,13 @@ The SQLite DB lives at `data/convoy.db` relative to the working directory. Back 
 
 - ✓ **v0.1** — convoy CRUD, link-based join, creator-approves, roster, status, manual close
 - ✓ **v0.2** — live location sharing, live map (Leaflet/OSM), leader designation
+- ✓ **v0.3** — QR-code invite share
+- ✓ **v0.4** — leader-pinned meetup + destination, route preview (rider → meetup, meetup → destination) via OSRM
 
 ## Not yet (deliberate)
 
-- Routes, fuel stops, rest stops, ETA
+- Multi-stop routes (fuel stops, rest stops) — natural extension of pinning
+- Per-rider "way to meetup" for non-leaders
 - Pre-ride check-in / emergency contacts
 - Full accounts / profiles / history across convoys
 - Push notifications
