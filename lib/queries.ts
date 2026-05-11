@@ -1,4 +1,11 @@
-import { db, type ConvoyRow, type MemberRow, type ConvoyStatus, type MemberState } from "./db";
+import {
+  db,
+  type ConvoyRow,
+  type MemberRow,
+  type ConvoyStatus,
+  type MemberState,
+  type LocationRow,
+} from "./db";
 import { newConvoyCode, newSecretToken } from "./ids";
 
 export function createConvoy(input: {
@@ -66,6 +73,83 @@ export function setMemberState(memberId: number, convoyId: number, state: Member
     .run(state, memberId, convoyId);
 }
 
+export function setLeader(memberId: number | null, convoyId: number): void {
+  const conn = db();
+  const tx = conn.transaction(() => {
+    conn.prepare("UPDATE members SET is_leader = 0 WHERE convoy_id = ?").run(convoyId);
+    if (memberId !== null) {
+      conn
+        .prepare("UPDATE members SET is_leader = 1 WHERE id = ? AND convoy_id = ?")
+        .run(memberId, convoyId);
+    }
+  });
+  tx();
+}
+
+export function upsertLocation(
+  memberId: number,
+  loc: { lat: number; lng: number; accuracy: number | null; heading: number | null; speed: number | null },
+): void {
+  db()
+    .prepare(
+      `INSERT INTO locations (member_id, lat, lng, accuracy, heading, speed, updated_at)
+       VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
+       ON CONFLICT(member_id) DO UPDATE SET
+         lat        = excluded.lat,
+         lng        = excluded.lng,
+         accuracy   = excluded.accuracy,
+         heading    = excluded.heading,
+         speed      = excluded.speed,
+         updated_at = excluded.updated_at`,
+    )
+    .run(memberId, loc.lat, loc.lng, loc.accuracy, loc.heading, loc.speed);
+}
+
+export interface LiveLocation {
+  memberId: number;
+  name: string;
+  isLeader: boolean;
+  lat: number;
+  lng: number;
+  accuracy: number | null;
+  heading: number | null;
+  speed: number | null;
+  updatedAt: string;
+  ageSec: number;
+}
+
+const LOCATION_STALE_SEC = 5 * 60;
+
+export function listLiveLocations(convoyId: number): LiveLocation[] {
+  const rows = db()
+    .prepare(
+      `SELECT l.member_id, l.lat, l.lng, l.accuracy, l.heading, l.speed, l.updated_at,
+              m.name, m.is_leader,
+              CAST((julianday('now') - julianday(l.updated_at)) * 86400 AS INTEGER) AS age_sec
+         FROM locations l
+         JOIN members m ON m.id = l.member_id
+        WHERE m.convoy_id = ? AND m.state = 'approved'`,
+    )
+    .all(convoyId) as Array<
+    LocationRow & { name: string; is_leader: number; age_sec: number }
+  >;
+
+  return rows
+    .filter((r) => r.age_sec <= LOCATION_STALE_SEC)
+    .map((r) => ({
+      memberId: r.member_id,
+      name: r.name,
+      isLeader: r.is_leader === 1,
+      lat: r.lat,
+      lng: r.lng,
+      accuracy: r.accuracy,
+      heading: r.heading,
+      speed: r.speed,
+      updatedAt: r.updated_at,
+      ageSec: r.age_sec,
+    }));
+}
+
 export function updateConvoy(
   convoyId: number,
   fields: { title?: string; meetupAt?: string; meetupPlace?: string; destination?: string },
@@ -107,6 +191,7 @@ export interface PublicMember {
   id: number;
   name: string;
   state: MemberState;
+  isLeader?: boolean;
 }
 
 export interface PublicConvoyView {
@@ -125,7 +210,12 @@ export function publicViewForCode(code: string): PublicConvoyView | null {
   if (!convoy) return null;
   const approved = listMembers(convoy.id)
     .filter((m) => m.state === "approved")
-    .map((m) => ({ id: m.id, name: m.name, state: m.state }));
+    .map((m) => ({
+      id: m.id,
+      name: m.name,
+      state: m.state,
+      isLeader: m.is_leader === 1,
+    }));
   return {
     code: convoy.code,
     title: convoy.title,
@@ -149,7 +239,7 @@ export function adminViewForToken(token: string): AdminConvoyView | null {
   const members = listMembers(convoy.id);
   const approved = members
     .filter((m) => m.state === "approved")
-    .map((m) => ({ id: m.id, name: m.name, state: m.state }));
+    .map((m) => ({ id: m.id, name: m.name, state: m.state, isLeader: m.is_leader === 1 }));
   const pending = members
     .filter((m) => m.state === "pending")
     .map((m) => ({ id: m.id, name: m.name, state: m.state }));

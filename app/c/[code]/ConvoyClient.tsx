@@ -1,8 +1,20 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import { formatMeetup, statusLabel } from "@/lib/format";
 import type { PublicConvoyView } from "@/lib/queries";
+import LocationSharePanel from "@/components/LocationSharePanel";
+import type { MapLocation } from "@/components/ConvoyMap";
+
+const ConvoyMap = dynamic(() => import("@/components/ConvoyMap"), {
+  ssr: false,
+  loading: () => (
+    <div className="h-72 w-full rounded-xl border border-slate-200 bg-slate-100 flex items-center justify-center text-sm text-slate-500">
+      Loading map…
+    </div>
+  ),
+});
 
 type MeState = "pending" | "approved" | "denied" | "left";
 interface Me {
@@ -20,6 +32,9 @@ export default function ConvoyClient({ initialView, initialMe }: Props) {
   const [view, setView] = useState<PublicConvoyView>(initialView);
   const [me, setMe] = useState<Me | null>(initialMe);
   const [refreshing, setRefreshing] = useState(false);
+  const [locations, setLocations] = useState<MapLocation[]>([]);
+
+  const isActiveMember = me?.state === "approved" && view.status === "active";
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -41,10 +56,35 @@ export default function ConvoyClient({ initialView, initialMe }: Props) {
     }
   }, [view.code]);
 
+  const refreshLocations = useCallback(async () => {
+    if (!isActiveMember) return;
+    try {
+      const res = await fetch(`/api/convoys/${view.code}/location`, { cache: "no-store" });
+      if (!res.ok) {
+        setLocations([]);
+        return;
+      }
+      const data = (await res.json()) as { locations: MapLocation[] };
+      setLocations(data.locations);
+    } catch {
+      /* network blip — keep old */
+    }
+  }, [isActiveMember, view.code]);
+
   useEffect(() => {
     const id = setInterval(refresh, 6000);
     return () => clearInterval(id);
   }, [refresh]);
+
+  useEffect(() => {
+    if (!isActiveMember) {
+      setLocations([]);
+      return;
+    }
+    refreshLocations();
+    const id = setInterval(refreshLocations, 5000);
+    return () => clearInterval(id);
+  }, [isActiveMember, refreshLocations]);
 
   const status = statusLabel(view.status);
 
@@ -75,6 +115,32 @@ export default function ConvoyClient({ initialView, initialMe }: Props) {
             refresh();
           }}
         />
+      )}
+
+      {me?.state === "approved" && view.status !== "closed" && (
+        <LocationSharePanel code={view.code} enabled={view.status === "active"} />
+      )}
+
+      {isActiveMember && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-slate-700">
+              Live map <span className="font-normal text-slate-500">({locations.length} sharing)</span>
+            </h2>
+            <button
+              onClick={refreshLocations}
+              className="text-xs text-slate-500 hover:text-slate-700"
+            >
+              Refresh
+            </button>
+          </div>
+          <ConvoyMap locations={locations} selfMemberId={me.id} />
+          {locations.length === 0 && (
+            <p className="text-xs text-slate-500">
+              No one&apos;s sharing yet. Tap &ldquo;Share my location&rdquo; above to start the map.
+            </p>
+          )}
+        </div>
       )}
 
       <Roster view={view} me={me} refreshing={refreshing} onRefresh={refresh} />
@@ -257,7 +323,10 @@ function Roster({
                 me?.id === m.id ? "border-accent" : ""
               }`}
             >
-              <span className="font-medium text-slate-800">{m.name}</span>
+              <span className="font-medium text-slate-800">
+                {m.name}
+                {m.isLeader && <span className="ml-2 text-xs text-accent">★ leader</span>}
+              </span>
               {me?.id === m.id && <span className="text-xs font-medium text-accent">you</span>}
             </li>
           ))}

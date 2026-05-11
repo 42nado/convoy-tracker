@@ -1,8 +1,21 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import dynamic from "next/dynamic";
 import { formatMeetup, statusLabel } from "@/lib/format";
 import type { AdminConvoyView } from "@/lib/queries";
+import type { MapLocation } from "@/components/ConvoyMap";
+
+const ConvoyMap = dynamic(() => import("@/components/ConvoyMap"), {
+  ssr: false,
+  loading: () => (
+    <div className="h-72 w-full rounded-xl border border-slate-200 bg-slate-100 flex items-center justify-center text-sm text-slate-500">
+      Loading map…
+    </div>
+  ),
+});
+
+const QRCard = dynamic(() => import("@/components/QRCard"), { ssr: false });
 
 interface Props {
   initialView: AdminConvoyView;
@@ -12,6 +25,7 @@ export default function AdminClient({ initialView }: Props) {
   const [view, setView] = useState<AdminConvoyView>(initialView);
   const [refreshing, setRefreshing] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [locations, setLocations] = useState<MapLocation[]>([]);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -23,10 +37,35 @@ export default function AdminClient({ initialView }: Props) {
     }
   }, [view.adminToken]);
 
+  const refreshLocations = useCallback(async () => {
+    if (view.status !== "active") return;
+    try {
+      const res = await fetch(`/api/admin/${view.adminToken}/locations`, { cache: "no-store" });
+      if (!res.ok) {
+        setLocations([]);
+        return;
+      }
+      const data = (await res.json()) as { locations: MapLocation[] };
+      setLocations(data.locations);
+    } catch {
+      /* keep old */
+    }
+  }, [view.adminToken, view.status]);
+
   useEffect(() => {
     const id = setInterval(refresh, 6000);
     return () => clearInterval(id);
   }, [refresh]);
+
+  useEffect(() => {
+    if (view.status !== "active") {
+      setLocations([]);
+      return;
+    }
+    refreshLocations();
+    const id = setInterval(refreshLocations, 5000);
+    return () => clearInterval(id);
+  }, [view.status, refreshLocations]);
 
   async function act(path: string, body?: Record<string, unknown>) {
     const res = await fetch(`/api/admin/${view.adminToken}${path}`, {
@@ -97,7 +136,31 @@ export default function AdminClient({ initialView }: Props) {
         onKick={(id, name) => {
           if (confirm(`Remove ${name} from the convoy?`)) act("/kick", { memberId: id });
         }}
+        onSetLeader={(id) => act("/leader", { memberId: id })}
+        onClearLeader={() => act("/leader", { memberId: null })}
       />
+
+      {view.status === "active" && (
+        <div className="space-y-2">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-semibold text-slate-700">
+              Live map <span className="font-normal text-slate-500">({locations.length} sharing)</span>
+            </h2>
+            <button
+              onClick={refreshLocations}
+              className="text-xs text-slate-500 hover:text-slate-700"
+            >
+              Refresh
+            </button>
+          </div>
+          <ConvoyMap locations={locations} selfMemberId={null} />
+          {locations.length === 0 && (
+            <p className="text-xs text-slate-500">
+              No riders are sharing yet. They&apos;ll see the &ldquo;Share my location&rdquo; button now that the ride is active.
+            </p>
+          )}
+        </div>
+      )}
     </section>
   );
 }
@@ -112,41 +175,24 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 function ShareCard({ joinUrl }: { joinUrl: string }) {
-  const [copied, setCopied] = useState(false);
-  async function copy() {
-    try {
-      await navigator.clipboard.writeText(joinUrl);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 1500);
-    } catch {
-      /* noop */
-    }
-  }
-  async function share() {
-    if (typeof navigator !== "undefined" && "share" in navigator) {
-      try {
-        await navigator.share({ url: joinUrl, title: "Join my convoy" });
-      } catch {
-        /* user cancelled */
-      }
-    } else {
-      copy();
-    }
-  }
+  const [showQr, setShowQr] = useState(false);
   return (
-    <div className="card space-y-3">
-      <p className="text-sm font-medium text-slate-700">Join link</p>
-      <p className="break-all rounded-md bg-slate-100 px-2 py-1.5 font-mono text-xs text-slate-700">
-        {joinUrl}
-      </p>
-      <div className="flex gap-2">
-        <button onClick={share} className="btn-primary flex-1 text-sm">
-          Share
+    <div className="space-y-2">
+      {showQr ? (
+        <>
+          <QRCard url={joinUrl} label="📷 Scan to join" />
+          <button
+            onClick={() => setShowQr(false)}
+            className="block w-full text-center text-xs text-slate-500 hover:text-slate-700"
+          >
+            Hide QR
+          </button>
+        </>
+      ) : (
+        <button onClick={() => setShowQr(true)} className="btn-secondary w-full text-sm">
+          📷 Show QR code to invite riders
         </button>
-        <button onClick={copy} className="btn-secondary flex-1 text-sm">
-          {copied ? "Copied ✓" : "Copy"}
-        </button>
-      </div>
+      )}
     </div>
   );
 }
@@ -242,9 +288,13 @@ function PendingList({
 function ApprovedList({
   approved,
   onKick,
+  onSetLeader,
+  onClearLeader,
 }: {
   approved: AdminConvoyView["approved"];
   onKick: (id: number, name: string) => void;
+  onSetLeader: (id: number) => void;
+  onClearLeader: () => void;
 }) {
   return (
     <div className="space-y-2">
@@ -258,8 +308,26 @@ function ApprovedList({
       ) : (
         <ul className="space-y-1.5">
           {approved.map((m) => (
-            <li key={m.id} className="card flex items-center justify-between py-2.5">
-              <span className="font-medium text-slate-800">{m.name}</span>
+            <li key={m.id} className="card flex items-center justify-between gap-2 py-2.5">
+              <span className="flex-1 font-medium text-slate-800">
+                {m.name}
+                {m.isLeader && <span className="ml-2 text-xs text-accent">★ leader</span>}
+              </span>
+              {m.isLeader ? (
+                <button
+                  onClick={onClearLeader}
+                  className="text-xs font-medium text-slate-500 hover:text-slate-700"
+                >
+                  Unset leader
+                </button>
+              ) : (
+                <button
+                  onClick={() => onSetLeader(m.id)}
+                  className="text-xs font-medium text-accent hover:text-orange-600"
+                >
+                  Make leader
+                </button>
+              )}
               <button
                 onClick={() => onKick(m.id, m.name)}
                 className="text-xs font-medium text-red-600 hover:text-red-700"

@@ -1,6 +1,9 @@
 "use client";
 
 import { useState } from "react";
+import dynamic from "next/dynamic";
+
+const QRCard = dynamic(() => import("@/components/QRCard"), { ssr: false });
 
 interface CreateResult {
   code: string;
@@ -134,22 +137,20 @@ function CreatedView({ result }: { result: CreateResult }) {
     <section className="space-y-5">
       <div>
         <h1 className="text-2xl font-bold tracking-tight">Convoy created ✓</h1>
-        <p className="mt-1 text-sm text-slate-600">Two links — save the creator link, it's the only way back in.</p>
+        <p className="mt-1 text-sm text-slate-600">
+          Have friends scan this QR — or share the link. Save the creator link below to manage the convoy.
+        </p>
       </div>
 
-      <LinkCard
-        label="Join link (share this)"
+      <QRCard
         url={result.joinUrl}
-        hint="Send this to your group chat. They open it, type a name, you approve."
-        tone="public"
+        label="📷 Scan to join"
       />
+      <p className="-mt-2 text-center text-xs text-slate-500">
+        They scan, type their name, you approve.
+      </p>
 
-      <LinkCard
-        label="🔒 Creator link (keep secret)"
-        url={result.adminUrl}
-        hint="Bookmark this. Anyone with it can approve joiners and close the convoy."
-        tone="secret"
-      />
+      <SecretLinkCard url={result.adminUrl} />
 
       <a href={result.adminUrl} className="btn-primary w-full">
         Open creator dashboard →
@@ -158,17 +159,7 @@ function CreatedView({ result }: { result: CreateResult }) {
   );
 }
 
-function LinkCard({
-  label,
-  url,
-  hint,
-  tone,
-}: {
-  label: string;
-  url: string;
-  hint: string;
-  tone: "public" | "secret";
-}) {
+function SecretLinkCard({ url }: { url: string }) {
   const [copied, setCopied] = useState(false);
   async function copy() {
     try {
@@ -180,17 +171,17 @@ function LinkCard({
     }
   }
   return (
-    <div className={`card ${tone === "secret" ? "border-amber-300 bg-amber-50" : ""}`}>
-      <p className="text-sm font-medium text-slate-700">{label}</p>
-      <p className="mt-1 break-all rounded-md bg-slate-100 px-2 py-1.5 font-mono text-xs text-slate-700">
+    <div className="card border-amber-300 bg-amber-50">
+      <p className="text-sm font-medium text-amber-900">🔒 Creator link (keep secret)</p>
+      <p className="mt-1 break-all rounded-md bg-white/60 px-2 py-1.5 font-mono text-xs text-amber-900">
         {url}
       </p>
-      <div className="mt-3 flex gap-2">
-        <button onClick={copy} className="btn-secondary flex-1 text-sm">
-          {copied ? "Copied ✓" : "Copy"}
-        </button>
-      </div>
-      <p className="mt-2 text-xs text-slate-500">{hint}</p>
+      <button onClick={copy} className="btn-secondary mt-3 w-full text-sm">
+        {copied ? "Copied ✓" : "Copy creator link"}
+      </button>
+      <p className="mt-2 text-xs text-amber-800/80">
+        Bookmark this. It&apos;s the only way back in — anyone with it can approve joiners and close the convoy.
+      </p>
     </div>
   );
 }

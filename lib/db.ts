@@ -35,11 +35,28 @@ function init(db: Database.Database) {
       name        TEXT NOT NULL,
       token       TEXT NOT NULL UNIQUE,
       state       TEXT NOT NULL DEFAULT 'pending',
+      is_leader   INTEGER NOT NULL DEFAULT 0,
       created_at  TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
     CREATE INDEX IF NOT EXISTS members_convoy_idx ON members(convoy_id);
+
+    CREATE TABLE IF NOT EXISTS locations (
+      member_id  INTEGER PRIMARY KEY REFERENCES members(id) ON DELETE CASCADE,
+      lat        REAL NOT NULL,
+      lng        REAL NOT NULL,
+      accuracy   REAL,
+      heading    REAL,
+      speed      REAL,
+      updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
+
+  // Idempotent migration: add is_leader column on pre-existing members tables.
+  const cols = db.prepare("PRAGMA table_info(members)").all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === "is_leader")) {
+    db.exec("ALTER TABLE members ADD COLUMN is_leader INTEGER NOT NULL DEFAULT 0");
+  }
 }
 
 export function db(): Database.Database {
@@ -73,5 +90,16 @@ export interface MemberRow {
   name: string;
   token: string;
   state: MemberState;
+  is_leader: number;
   created_at: string;
+}
+
+export interface LocationRow {
+  member_id: number;
+  lat: number;
+  lng: number;
+  accuracy: number | null;
+  heading: number | null;
+  speed: number | null;
+  updated_at: string;
 }
