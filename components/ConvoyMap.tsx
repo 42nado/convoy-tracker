@@ -55,7 +55,7 @@ function makeIcon(loc: MapLocation, isSelf: boolean): L.DivIcon {
       font-size: 13px;
       box-shadow: 0 2px 8px rgba(0,0,0,.25);
       border: ${ring};
-    ">${initials(loc.name)}</div>
+    ">${escapeHtml(initials(loc.name))}</div>
   `;
   return L.divIcon({
     html,
@@ -97,6 +97,16 @@ export default function ConvoyMap({
   const destMarkerRef = useRef<L.Marker | null>(null);
   const routeLayersRef = useRef<Map<string, L.Polyline>>(new Map());
   const fittedRef = useRef(false);
+  const fittedMembersRef = useRef<Set<number>>(new Set());
+  const fittedLeaderRef = useRef<number | null>(null);
+  const leader = locations.find((location) => location.isLeader);
+
+  function fitEveryone() {
+    const points: L.LatLngTuple[] = locations.map((location) => [location.lat, location.lng]);
+    if (meetup) points.push([meetup.lat, meetup.lng]);
+    if (destination) points.push([destination.lat, destination.lng]);
+    if (points.length) mapRef.current?.fitBounds(L.latLngBounds(points).pad(0.2), { maxZoom: 15 });
+  }
 
   // Init map once
   useEffect(() => {
@@ -121,6 +131,8 @@ export default function ConvoyMap({
       destMarkerRef.current = null;
       routeLayersRef.current.clear();
       fittedRef.current = false;
+      fittedMembersRef.current.clear();
+      fittedLeaderRef.current = null;
     };
   }, []);
 
@@ -199,8 +211,13 @@ export default function ConvoyMap({
         existing.setLatLng(latlng);
         existing.setIcon(makeIcon(loc, isSelf));
         existing.setPopupContent(popup);
+        existing.setZIndexOffset(loc.isLeader ? 1000 : 0);
       } else {
-        const marker = L.marker(latlng, { icon: makeIcon(loc, isSelf) }).addTo(map);
+        const marker = L.marker(latlng, {
+          icon: makeIcon(loc, isSelf),
+          zIndexOffset: loc.isLeader ? 1000 : 0,
+          title: `${loc.name}${loc.isLeader ? " · leader" : ""}`,
+        }).addTo(map);
         marker.bindPopup(popup);
         markersRef.current.set(loc.memberId, marker);
       }
@@ -242,7 +259,9 @@ export default function ConvoyMap({
     }
 
     // Fit bounds once we first have *anything* worth fitting to
-    if (!fittedRef.current) {
+    const leaderId = locations.find((location) => location.isLeader)?.memberId ?? null;
+    const hasNewRider = locations.some((location) => !fittedMembersRef.current.has(location.memberId));
+    if (!fittedRef.current || hasNewRider || leaderId !== fittedLeaderRef.current) {
       const pts: L.LatLngTuple[] = locations.map((l) => [l.lat, l.lng]);
       if (meetup) pts.push([meetup.lat, meetup.lng]);
       if (destination) pts.push([destination.lat, destination.lng]);
@@ -252,9 +271,29 @@ export default function ConvoyMap({
         fittedRef.current = true;
       }
     }
+    fittedMembersRef.current = seen;
+    fittedLeaderRef.current = leaderId;
   }, [locations, selfMemberId, meetup, destination]);
 
-  return <div ref={mapElRef} className="h-72 w-full rounded-xl overflow-hidden border border-slate-200" />;
+  return (
+    <div className="space-y-2">
+      <div className="flex flex-wrap gap-2">
+        <button type="button" onClick={fitEveryone} disabled={!locations.length && !meetup && !destination} className="btn-secondary text-xs">
+          Show all
+        </button>
+        {leader && (
+          <button type="button" className="btn-secondary text-xs" onClick={() => {
+            mapRef.current?.setView([leader.lat, leader.lng], 16);
+            markersRef.current.get(leader.memberId)?.openPopup();
+          }}>
+            ★ Show leader
+          </button>
+        )}
+      </div>
+      <div ref={mapElRef} className="relative z-0 h-72 w-full rounded-xl overflow-hidden border border-slate-200" />
+      {locations.length > 0 && <p className="text-xs text-slate-500">Orange: leader · Blue: you · Dark: other riders. Tap a rider for the last update time.</p>}
+    </div>
+  );
 }
 
 function formatAge(sec: number): string {

@@ -48,6 +48,7 @@ export async function createConvoy(input: {
   meetupAt: string;
   meetupPlace: string;
   destination: string;
+  pins?: Partial<ConvoyPins>;
 }): Promise<ConvoyRow> {
   const conn = db();
   let code = newConvoyCode();
@@ -59,10 +60,15 @@ export async function createConvoy(input: {
   const adminToken = newSecretToken();
   const info = await conn
     .prepare(
-      `INSERT INTO convoys (code, admin_token, title, meetup_at, meetup_place, destination)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO convoys (code, admin_token, title, meetup_at, meetup_place, destination,
+                            meetup_lat, meetup_lng, dest_lat, dest_lng)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     )
-    .bind(code, adminToken, input.title, input.meetupAt, input.meetupPlace, input.destination)
+    .bind(
+      code, adminToken, input.title, input.meetupAt, input.meetupPlace, input.destination,
+      input.pins?.meetup?.lat ?? null, input.pins?.meetup?.lng ?? null,
+      input.pins?.destination?.lat ?? null, input.pins?.destination?.lng ?? null,
+    )
     .run();
 
   const row = await conn

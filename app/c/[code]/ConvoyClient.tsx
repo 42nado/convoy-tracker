@@ -36,7 +36,10 @@ export default function ConvoyClient({ initialView, initialMe }: Props) {
   const [locations, setLocations] = useState<MapLocation[]>([]);
   const [leaderRoutes, setLeaderRoutes] = useState<RouteOverlay[]>([]);
 
-  const isActiveMember = me?.state === "approved" && view.status === "active";
+  const canViewLive = me?.state === "approved" && view.status !== "closed";
+  const [locationError, setLocationError] = useState<string | null>(null);
+  const leader = view.approved.find((member) => member.isLeader);
+  const leaderLocation = locations.find((location) => location.isLeader);
 
   const myApprovedRecord = useMemo(
     () => (me ? view.approved.find((a) => a.id === me.id) : undefined),
@@ -44,7 +47,7 @@ export default function ConvoyClient({ initialView, initialMe }: Props) {
   );
   const iAmLeader = myApprovedRecord?.isLeader === true;
   const hasPins = !!view.pins.meetup || !!view.pins.destination;
-  const showMap = view.status !== "closed" && (isActiveMember || hasPins);
+  const showMap = view.status !== "closed" && (canViewLive || hasPins);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -61,25 +64,30 @@ export default function ConvoyClient({ initialView, initialMe }: Props) {
         const m = (await mRes.json()) as { member: Me | null };
         setMe(m.member);
       }
+    } catch {
+      /* Retry on the next roster refresh. */
     } finally {
       setRefreshing(false);
     }
   }, [view.code]);
 
   const refreshLocations = useCallback(async () => {
-    if (!isActiveMember) return;
+    if (!canViewLive) return;
     try {
       const res = await fetch(`/api/convoys/${view.code}/location`, { cache: "no-store" });
       if (!res.ok) {
         setLocations([]);
+        setLocationError("Could not load locations. Check your connection and membership, then refresh.");
         return;
       }
       const data = (await res.json()) as { locations: MapLocation[] };
       setLocations(data.locations);
+      setLocationError(null);
     } catch {
-      /* network blip — keep old */
+      setLocations([]);
+      setLocationError("Location updates are unavailable. Retrying…");
     }
-  }, [isActiveMember, view.code]);
+  }, [canViewLive, view.code]);
 
   useEffect(() => {
     const id = setInterval(refresh, 6000);
@@ -87,14 +95,14 @@ export default function ConvoyClient({ initialView, initialMe }: Props) {
   }, [refresh]);
 
   useEffect(() => {
-    if (!isActiveMember) {
+    if (!canViewLive) {
       setLocations([]);
       return;
     }
     refreshLocations();
     const id = setInterval(refreshLocations, 5000);
     return () => clearInterval(id);
-  }, [isActiveMember, refreshLocations]);
+  }, [canViewLive, refreshLocations]);
 
   const status = statusLabel(view.status);
 
@@ -128,7 +136,7 @@ export default function ConvoyClient({ initialView, initialMe }: Props) {
       )}
 
       {me?.state === "approved" && view.status !== "closed" && (
-        <LocationSharePanel code={view.code} enabled={view.status === "active"} />
+        <LocationSharePanel code={view.code} enabled={canViewLive} />
       )}
 
       {iAmLeader && view.status !== "closed" && (
@@ -144,12 +152,12 @@ export default function ConvoyClient({ initialView, initialMe }: Props) {
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-slate-700">
-              {isActiveMember ? "Live map" : "Map"}
-              {isActiveMember && (
+              {canViewLive ? "Live map" : "Map"}
+              {canViewLive && (
                 <span className="font-normal text-slate-500"> ({locations.length} sharing)</span>
               )}
             </h2>
-            {isActiveMember && (
+            {canViewLive && (
               <button
                 onClick={refreshLocations}
                 className="text-xs text-slate-500 hover:text-slate-700"
@@ -159,20 +167,32 @@ export default function ConvoyClient({ initialView, initialMe }: Props) {
             )}
           </div>
           <ConvoyMap
-            locations={locations}
+            locations={canViewLive ? locations : []}
             selfMemberId={me?.id ?? null}
             meetup={view.pins.meetup}
             destination={view.pins.destination}
             routes={iAmLeader ? leaderRoutes : undefined}
           />
-          {isActiveMember && locations.length === 0 && (
+          {canViewLive && locationError && <p role="status" className="text-xs text-red-700">{locationError}</p>}
+          {canViewLive && !locationError && (
+            <p className="text-xs text-slate-600">
+              {!leader
+                ? "No leader selected yet. The creator can choose one from the roster."
+                : leaderLocation
+                  ? `★ ${leader.name} is sharing. The orange marker shows the leader’s latest location.`
+                  : iAmLeader
+                    ? "You are the leader. Tap Share my location and allow location access so members can find you."
+                    : `Waiting for ${leader.name} to share a recent location. The leader must tap Share my location and allow location access.`}
+            </p>
+          )}
+          {canViewLive && locations.length === 0 && !locationError && (
             <p className="text-xs text-slate-500">
               No one&apos;s sharing yet. Tap &ldquo;Share my location&rdquo; above to start the map.
             </p>
           )}
-          {!isActiveMember && hasPins && (
+          {!canViewLive && hasPins && (
             <p className="text-xs text-slate-500">
-              Live rider locations show up here once the creator marks the ride as &ldquo;Riding now&rdquo;.
+              Join and wait for approval to see live rider locations. Meetup and destination pins are visible to everyone.
             </p>
           )}
         </div>

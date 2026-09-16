@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createConvoy } from "@/lib/queries";
+import { parsePinPatchBody, type PinPatch } from "@/lib/pins";
 
 export const runtime = "nodejs";
 
@@ -8,6 +9,7 @@ interface CreateBody {
   meetupAt?: unknown;
   meetupPlace?: unknown;
   destination?: unknown;
+  pins?: unknown;
 }
 
 function s(v: unknown, max: number): string | null {
@@ -33,7 +35,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid meetup time" }, { status: 400 });
   }
 
-  const convoy = await createConvoy({ title, meetupAt, meetupPlace, destination });
+  let pins: PinPatch = {};
+  if (body.pins !== undefined) {
+    const parsed = parsePinPatchBody(body.pins);
+    if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
+    pins = parsed.patch;
+  }
+
+  const convoy = await createConvoy({ title, meetupAt, meetupPlace, destination, pins });
   const origin = req.nextUrl.origin;
 
   return NextResponse.json({

@@ -227,6 +227,7 @@ export default function LeaderControls({ code, pins, onPinsChanged, onRoutesChan
           onSave={(value) => savePin(editing, value)}
           allowClear
           saving={saving}
+          error={error}
         />
       )}
     </div>

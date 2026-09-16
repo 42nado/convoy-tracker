@@ -2,8 +2,11 @@
 
 import { useState } from "react";
 import dynamic from "next/dynamic";
+import type { LatLng } from "@/lib/db";
+import type { ConvoyPins } from "@/lib/queries";
 
 const QRCard = dynamic(() => import("@/components/QRCard"), { ssr: false });
+const PinPicker = dynamic(() => import("@/components/PinPicker"), { ssr: false });
 
 interface CreateResult {
   code: string;
@@ -16,6 +19,21 @@ export default function HomePage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<CreateResult | null>(null);
+  const [meetupPlace, setMeetupPlace] = useState("");
+  const [destination, setDestination] = useState("");
+  const [pins, setPins] = useState<ConvoyPins>({ meetup: null, destination: null });
+  const [pinModal, setPinModal] = useState<"meetup" | "destination" | null>(null);
+
+  function selectPlace(point: LatLng | null, label?: string) {
+    if (!pinModal) return;
+    setPins((current) => ({ ...current, [pinModal]: point }));
+    if (point) {
+      const name = (label || `${point.lat.toFixed(5)}, ${point.lng.toFixed(5)}`).slice(0, 120);
+      if (pinModal === "meetup") setMeetupPlace(name);
+      else setDestination(name);
+    }
+    setPinModal(null);
+  }
 
   async function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -27,6 +45,7 @@ export default function HomePage() {
       meetupAt: String(form.get("meetupAt") ?? ""),
       meetupPlace: String(form.get("meetupPlace") ?? "").trim(),
       destination: String(form.get("destination") ?? "").trim(),
+      pins,
     };
     if (!payload.title || !payload.meetupAt || !payload.meetupPlace || !payload.destination) {
       setError("Fill in every field — they're all needed.");
@@ -95,12 +114,21 @@ export default function HomePage() {
             id="meetupPlace"
             name="meetupPlace"
             type="text"
+            value={meetupPlace}
+            onChange={(e) => {
+              setMeetupPlace(e.target.value);
+              setPins((current) => ({ ...current, meetup: null }));
+            }}
             placeholder="Shell Magallanes"
             className="input"
             required
             autoComplete="off"
             maxLength={120}
           />
+          <button type="button" onClick={() => setPinModal("meetup")} className="btn-secondary mt-2 w-full text-sm">
+            {pins.meetup ? "Edit meetup on map" : "Choose meetup on map / search"}
+          </button>
+          {pins.meetup && <p className="mt-1 text-xs text-emerald-700">Meetup pinned on the map ✓</p>}
         </div>
         <div>
           <label htmlFor="destination" className="label">
@@ -110,12 +138,21 @@ export default function HomePage() {
             id="destination"
             name="destination"
             type="text"
+            value={destination}
+            onChange={(e) => {
+              setDestination(e.target.value);
+              setPins((current) => ({ ...current, destination: null }));
+            }}
             placeholder="Tagaytay Picnic Grove"
             className="input"
             required
             autoComplete="off"
             maxLength={120}
           />
+          <button type="button" onClick={() => setPinModal("destination")} className="btn-secondary mt-2 w-full text-sm">
+            {pins.destination ? "Edit destination on map" : "Choose destination on map / search"}
+          </button>
+          {pins.destination && <p className="mt-1 text-xs text-emerald-700">Destination pinned on the map ✓</p>}
         </div>
 
         {error && (
@@ -128,6 +165,18 @@ export default function HomePage() {
           {submitting ? "Creating…" : "Create convoy"}
         </button>
       </form>
+      {pinModal && (
+        <PinPicker
+          title={pinModal === "meetup" ? "Choose meetup point" : "Choose destination"}
+          hint="Search for a place, use your current location, or tap the map."
+          initial={pins[pinModal]}
+          initialQuery={pinModal === "meetup" ? meetupPlace : destination}
+          fallbackCenter={pins.meetup ?? pins.destination ?? undefined}
+          onCancel={() => setPinModal(null)}
+          onSave={selectPlace}
+          allowClear
+        />
+      )}
     </section>
   );
 }

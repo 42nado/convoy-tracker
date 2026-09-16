@@ -71,5 +71,8 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ code: stri
     return NextResponse.json({ error: "Not an approved member" }, { status: 403 });
   }
 
-  return NextResponse.json({ locations: await listLiveLocations(convoy.id) });
+  return NextResponse.json(
+    { locations: convoy.status === "closed" ? [] : await listLiveLocations(convoy.id) },
+    { headers: { "Cache-Control": "private, no-store" } },
+  );
 }

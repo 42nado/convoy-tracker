@@ -28,6 +28,7 @@ export default function AdminClient({ initialView }: Props) {
   const [refreshing, setRefreshing] = useState(false);
   const [editing, setEditing] = useState(false);
   const [locations, setLocations] = useState<MapLocation[]>([]);
+  const [locationError, setLocationError] = useState<string | null>(null);
   const [pinModal, setPinModal] = useState<"meetup" | "destination" | null>(null);
   const [pinSaving, setPinSaving] = useState(false);
   const [pinError, setPinError] = useState<string | null>(null);
@@ -37,23 +38,28 @@ export default function AdminClient({ initialView }: Props) {
     try {
       const res = await fetch(`/api/admin/${view.adminToken}`, { cache: "no-store" });
       if (res.ok) setView((await res.json()) as AdminConvoyView);
+    } catch {
+      /* Retry on the next roster refresh. */
     } finally {
       setRefreshing(false);
     }
   }, [view.adminToken]);
 
   const refreshLocations = useCallback(async () => {
-    if (view.status !== "active") return;
+    if (view.status === "closed") return;
     try {
       const res = await fetch(`/api/admin/${view.adminToken}/locations`, { cache: "no-store" });
       if (!res.ok) {
         setLocations([]);
+        setLocationError("Could not load locations. Try refreshing.");
         return;
       }
       const data = (await res.json()) as { locations: MapLocation[] };
       setLocations(data.locations);
+      setLocationError(null);
     } catch {
-      /* keep old */
+      setLocations([]);
+      setLocationError("Location updates are unavailable. Retrying…");
     }
   }, [view.adminToken, view.status]);
 
@@ -63,7 +69,7 @@ export default function AdminClient({ initialView }: Props) {
   }, [refresh]);
 
   useEffect(() => {
-    if (view.status !== "active") {
+    if (view.status === "closed") {
       setLocations([]);
       return;
     }
@@ -108,8 +114,7 @@ export default function AdminClient({ initialView }: Props) {
     }
   }
 
-  const hasPins = !!view.pins.meetup || !!view.pins.destination;
-  const showMap = view.status !== "closed" && (view.status === "active" || hasPins);
+  const showMap = view.status !== "closed";
 
   const status = statusLabel(view.status);
   const joinUrl = typeof window === "undefined" ? "" : `${window.location.origin}/c/${view.code}`;
@@ -125,6 +130,12 @@ export default function AdminClient({ initialView }: Props) {
       </div>
 
       <ShareCard joinUrl={joinUrl} />
+      {view.status !== "closed" && (
+        <div className="card space-y-2 text-sm">
+          <p>Riding too? Open the rider page, join and approve yourself here, then tap Share my location there. Choose Make leader beside your name if you are leading.</p>
+          <a href={`/c/${view.code}`} target="_blank" rel="noopener noreferrer" className="btn-secondary w-full text-sm">Open rider page →</a>
+        </div>
+      )}
 
       {editing ? (
         <EditCard view={view} adminToken={view.adminToken} onDone={(updated) => {
@@ -197,19 +208,15 @@ export default function AdminClient({ initialView }: Props) {
         <div className="space-y-2">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-semibold text-slate-700">
-              {view.status === "active" ? "Live map" : "Map"}
-              {view.status === "active" && (
-                <span className="font-normal text-slate-500"> ({locations.length} sharing)</span>
-              )}
+              Live map
+              <span className="font-normal text-slate-500"> ({locations.length} sharing)</span>
             </h2>
-            {view.status === "active" && (
-              <button
-                onClick={refreshLocations}
-                className="text-xs text-slate-500 hover:text-slate-700"
-              >
-                Refresh
-              </button>
-            )}
+            <button
+              onClick={refreshLocations}
+              className="text-xs text-slate-500 hover:text-slate-700"
+            >
+              Refresh
+            </button>
           </div>
           <ConvoyMap
             locations={locations}
@@ -217,9 +224,10 @@ export default function AdminClient({ initialView }: Props) {
             meetup={view.pins.meetup}
             destination={view.pins.destination}
           />
-          {view.status === "active" && locations.length === 0 && (
+          {locationError && <p role="status" className="text-xs text-red-700">{locationError}</p>}
+          {!locationError && locations.length === 0 && (
             <p className="text-xs text-slate-500">
-              No riders are sharing yet. They&apos;ll see the &ldquo;Share my location&rdquo; button now that the ride is active.
+              No riders are sharing yet. Approved riders, including the leader, can tap &ldquo;Share my location&rdquo; on the rider page, even before the ride starts.
             </p>
           )}
         </div>
@@ -234,6 +242,8 @@ export default function AdminClient({ initialView }: Props) {
               : "Where the convoy is heading."
           }
           initial={pinModal === "meetup" ? view.pins.meetup : view.pins.destination}
+          initialQuery={pinModal === "meetup" ? view.meetup_place : view.destination}
+          error={pinError}
           onCancel={() => {
             setPinModal(null);
             setPinError(null);
