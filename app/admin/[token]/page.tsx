@@ -6,7 +6,7 @@ export const dynamic = "force-dynamic";
 
 export default async function AdminPage({ params }: { params: Promise<{ token: string }> }) {
   const { token } = await params;
-  const view = adminViewForToken(token);
+  const view = await adminViewForToken(token);
   if (!view) notFound();
   return <AdminClient initialView={view} />;
 }

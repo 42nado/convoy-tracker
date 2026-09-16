@@ -19,21 +19,26 @@ No accounts. No app store. Just the basics done right.
 
 ```bash
 npm install
+npm run db:migrate:local
 npm run dev
 # → http://localhost:3000
 ```
+
+Local development uses Wrangler's local D1 database under `.wrangler/`.
 
 ## Build it
 
 ```bash
 npm run build
-npm start
+npm run preview
+# → http://localhost:8787
 ```
 
 ## Stack
 
 - **Next.js 15** (App Router) — TypeScript, server components for SSR, client components for the live UI bits
-- **SQLite** via [`better-sqlite3`](https://github.com/WiseLibs/better-sqlite3) — single-file DB at `data/convoy.db`, no setup
+- **Cloudflare D1** — serverless SQLite accessed through a Worker binding, with versioned SQL migrations
+- **OpenNext for Cloudflare** — packages the dynamic Next.js application as a Cloudflare Worker
 - **Tailwind CSS** — utility classes + a few small component classes (`.btn-primary`, `.input`, `.card`) in `app/globals.css`
 - **Leaflet + OpenStreetMap** — live map (no API key, free tiles, dynamic-imported so it doesn't bloat the create page)
 - **OSRM public router** ([router.project-osrm.org](https://router.project-osrm.org)) — driving routes from GeoJSON, no API key. Straight-line haversine fallback if it's unreachable.
@@ -99,7 +104,7 @@ components/
   QRCard.tsx                          QR + share/copy/PNG controls for the join URL
 
 lib/
-  db.ts                               sqlite connection + schema
+  db.ts                               Cloudflare D1 binding + row types
   queries.ts                          all DB operations
   ids.ts                              short convoy codes + secret tokens
   admin.ts                            withAdmin() wrapper for protected routes
@@ -108,7 +113,7 @@ lib/
 
 ## Data model
 
-Three tables, schema is idempotent — auto-creates on first request and runs `ALTER TABLE … ADD COLUMN` migrations for `members.is_leader` and `convoys.{meetup,dest}_{lat,lng}` if upgrading from an older version:
+Three D1 tables are created by `migrations/0001_initial.sql`:
 
 ```sql
 convoys(id, code, admin_token, title, meetup_at, meetup_place, destination,
@@ -132,14 +137,35 @@ locations(member_id → members [PRIMARY KEY], lat, lng, accuracy, heading, spee
 - **Riders** are identified by an httpOnly cookie scoped per convoy (`convoy_<CODE>`). Switching phones / clearing cookies loses access — by design for v1.
 - **Creators** are identified by the secret in their creator URL. The URL is the only way back in. The creator UI warns about this and gives copy/share buttons.
 
-## Deployment
+## Deploy to Cloudflare Workers
 
-Anywhere that runs Node 20+. Easiest:
+Prerequisites: a Cloudflare account and Node.js 20 or newer.
 
-- **Self-host** (VPS / Raspberry Pi): `npm run build && npm start` behind nginx/Caddy.
-- **Vercel / Netlify**: works, but SQLite needs a persistent disk — switch the DB to Postgres (`@vercel/postgres`) or Turso for serverless deploys.
+1. Install dependencies and authenticate:
 
-The SQLite DB lives at `data/convoy.db` relative to the working directory. Back this up if you care about it.
+   ```bash
+   npm install
+   npx wrangler login
+   ```
+
+2. Create the production D1 database:
+
+   ```bash
+   npx wrangler d1 create convoy-tracker
+   ```
+
+3. Copy the returned `database_id` into the `DB` entry in `wrangler.jsonc`, replacing the all-zero local placeholder.
+
+4. Apply the production schema and deploy:
+
+   ```bash
+   npm run db:migrate:remote
+   npm run deploy
+   ```
+
+Use `npm run preview` before deployment to build and run the application in the Workers runtime with a local D1 database.
+
+Existing data from the former `data/convoy.db` is not uploaded automatically. Export it as SQL and import it into D1 separately if it needs to be preserved.
 
 ## Shipped so far
 

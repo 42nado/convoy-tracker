@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 export async function POST(req: NextRequest, ctx: { params: Promise<{ code: string }> }) {
   const { code } = await ctx.params;
   const upper = code.toUpperCase();
-  const convoy = getConvoyByCode(upper);
+  const convoy = await getConvoyByCode(upper);
   if (!convoy) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (convoy.status === "closed") {
     return NextResponse.json({ error: "This convoy is closed" }, { status: 400 });
@@ -23,7 +23,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ code: stri
   const cookieStore = await cookies();
   const existingToken = cookieStore.get(cookieName)?.value;
   if (existingToken) {
-    const existing = getMemberByToken(convoy.id, existingToken);
+    const existing = await getMemberByToken(convoy.id, existingToken);
     if (existing) {
       return NextResponse.json({
         member: { id: existing.id, name: existing.name, state: existing.state },
@@ -31,7 +31,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ code: stri
     }
   }
 
-  const member = requestJoin(convoy.id, raw);
+  const member = await requestJoin(convoy.id, raw);
 
   const res = NextResponse.json({
     member: { id: member.id, name: member.name, state: member.state },

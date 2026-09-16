@@ -8,7 +8,7 @@ export async function withAdmin(
   req: NextRequest,
 ): Promise<NextResponse> {
   const { token } = await ctx.params;
-  const convoy = getConvoyByAdminToken(token);
+  const convoy = await getConvoyByAdminToken(token);
   if (!convoy) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   return handler(convoy, req);
 }

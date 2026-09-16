@@ -7,7 +7,7 @@ export const runtime = "nodejs";
 export async function POST(_req: NextRequest, ctx: { params: Promise<{ code: string }> }) {
   const { code } = await ctx.params;
   const upper = code.toUpperCase();
-  const convoy = getConvoyByCode(upper);
+  const convoy = await getConvoyByCode(upper);
   if (!convoy) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const cookieName = `convoy_${upper}`;
@@ -15,8 +15,8 @@ export async function POST(_req: NextRequest, ctx: { params: Promise<{ code: str
   const token = cookieStore.get(cookieName)?.value;
   if (!token) return NextResponse.json({ ok: true });
 
-  const m = getMemberByToken(convoy.id, token);
-  if (m) setMemberState(m.id, convoy.id, "left");
+  const m = await getMemberByToken(convoy.id, token);
+  if (m) await setMemberState(m.id, convoy.id, "left");
 
   const res = NextResponse.json({ ok: true });
   res.cookies.set({ name: cookieName, value: "", path: "/", maxAge: 0 });

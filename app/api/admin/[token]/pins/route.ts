@@ -15,7 +15,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ token: str
       const body = await req.json().catch(() => null);
       const parsed = parsePinPatchBody(body);
       if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 400 });
-      setPins(convoy.id, parsed.patch);
+      await setPins(convoy.id, parsed.patch);
       return NextResponse.json({ ok: true });
     },
     req,

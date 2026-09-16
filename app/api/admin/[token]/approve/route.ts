@@ -10,7 +10,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ token: str
     async (convoy) => {
       const memberId = await readMemberId(req);
       if (!memberId) return NextResponse.json({ error: "memberId required" }, { status: 400 });
-      setMemberState(memberId, convoy.id, "approved");
+      await setMemberState(memberId, convoy.id, "approved");
       return NextResponse.json({ ok: true });
     },
     req,

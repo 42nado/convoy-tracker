@@ -19,7 +19,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ token: str
       if (convoy.status === "closed" && status !== "closed") {
         return NextResponse.json({ error: "Closed convoys can't be reopened" }, { status: 400 });
       }
-      setConvoyStatus(convoy.id, status);
+      await setConvoyStatus(convoy.id, status);
       return NextResponse.json({ ok: true });
     },
     req,

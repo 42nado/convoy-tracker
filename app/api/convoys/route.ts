@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Invalid meetup time" }, { status: 400 });
   }
 
-  const convoy = createConvoy({ title, meetupAt, meetupPlace, destination });
+  const convoy = await createConvoy({ title, meetupAt, meetupPlace, destination });
   const origin = req.nextUrl.origin;
 
   return NextResponse.json({

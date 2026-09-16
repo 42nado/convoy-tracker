@@ -27,7 +27,7 @@ function num(v: unknown, opts?: { min?: number; max?: number }): number | null {
 export async function POST(req: NextRequest, ctx: { params: Promise<{ code: string }> }) {
   const { code } = await ctx.params;
   const upper = code.toUpperCase();
-  const convoy = getConvoyByCode(upper);
+  const convoy = await getConvoyByCode(upper);
   if (!convoy) return NextResponse.json({ error: "Not found" }, { status: 404 });
   if (convoy.status === "closed") {
     return NextResponse.json({ error: "Convoy is closed" }, { status: 400 });
@@ -36,7 +36,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ code: stri
   const cookieStore = await cookies();
   const token = cookieStore.get(`convoy_${upper}`)?.value;
   if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const member = getMemberByToken(convoy.id, token);
+  const member = await getMemberByToken(convoy.id, token);
   if (!member || member.state !== "approved") {
     return NextResponse.json({ error: "Not an approved member" }, { status: 403 });
   }
@@ -53,23 +53,23 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ code: stri
   const heading = num(body.heading, { min: 0, max: 360 });
   const speed = num(body.speed, { min: 0 });
 
-  upsertLocation(member.id, { lat, lng, accuracy, heading, speed });
+  await upsertLocation(member.id, { lat, lng, accuracy, heading, speed });
   return NextResponse.json({ ok: true });
 }
 
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ code: string }> }) {
   const { code } = await ctx.params;
   const upper = code.toUpperCase();
-  const convoy = getConvoyByCode(upper);
+  const convoy = await getConvoyByCode(upper);
   if (!convoy) return NextResponse.json({ error: "Not found" }, { status: 404 });
 
   const cookieStore = await cookies();
   const token = cookieStore.get(`convoy_${upper}`)?.value;
   if (!token) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  const member = getMemberByToken(convoy.id, token);
+  const member = await getMemberByToken(convoy.id, token);
   if (!member || member.state !== "approved") {
     return NextResponse.json({ error: "Not an approved member" }, { status: 403 });
   }
 
-  return NextResponse.json({ locations: listLiveLocations(convoy.id) });
+  return NextResponse.json({ locations: await listLiveLocations(convoy.id) });
 }

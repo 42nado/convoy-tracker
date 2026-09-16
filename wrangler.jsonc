@@ -1,0 +1,36 @@
+{
+	"$schema": "./node_modules/wrangler/config-schema.json",
+	"name": "convoy-tracker",
+	"main": ".open-next/worker.js",
+	"compatibility_date": "2026-09-16",
+	"compatibility_flags": [
+		"nodejs_compat"
+	],
+	"assets": {
+		"directory": ".open-next/assets",
+		"binding": "ASSETS"
+	},
+	"services": [
+		{
+			"binding": "WORKER_SELF_REFERENCE",
+			"service": "convoy-tracker"
+		}
+	],
+	"d1_databases": [
+		{
+			"binding": "DB",
+			"database_name": "convoy-tracker",
+			"database_id": "e76c4faa-5e46-44fd-81f3-00a10a9b914d",
+			"migrations_dir": "migrations"
+		},
+		{
+			"binding": "convoy_tracker",
+			"database_name": "convoy-tracker",
+			"database_id": "e76c4faa-5e46-44fd-81f3-00a10a9b914d",
+			"remote": true
+		}
+	],
+	"observability": {
+		"enabled": true
+	}
+}

@@ -40,7 +40,7 @@ export async function PATCH(req: NextRequest, ctx: { params: Promise<{ token: st
         return NextResponse.json({ error: "Invalid meetup time" }, { status: 400 });
       }
 
-      updateConvoy(convoy.id, { title, meetupAt, meetupPlace, destination });
+      await updateConvoy(convoy.id, { title, meetupAt, meetupPlace, destination });
       return NextResponse.json({ ok: true });
     },
     req,

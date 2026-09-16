@@ -1,6 +1,8 @@
-import { randomBytes } from "node:crypto";
-
 const ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+
+function randomBytes(length: number): Uint8Array {
+  return crypto.getRandomValues(new Uint8Array(length));
+}
 
 export function newConvoyCode(): string {
   const bytes = randomBytes(6);
@@ -10,5 +12,8 @@ export function newConvoyCode(): string {
 }
 
 export function newSecretToken(): string {
-  return randomBytes(24).toString("base64url");
+  const bytes = randomBytes(24);
+  let binary = "";
+  for (const byte of bytes) binary += String.fromCharCode(byte);
+  return btoa(binary).replaceAll("+", "-").replaceAll("/", "_").replace(/=+$/, "");
 }

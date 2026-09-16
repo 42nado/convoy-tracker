@@ -24,10 +24,10 @@ function pinsFromRow(row: ConvoyRow): ConvoyPins {
   return { meetup, destination };
 }
 
-export function setPins(
+export async function setPins(
   convoyId: number,
   patch: { meetup?: LatLng | null; destination?: LatLng | null },
-): void {
+): Promise<void> {
   const sets: string[] = [];
   const values: (number | null)[] = [];
   if (patch.meetup !== undefined) {
@@ -40,92 +40,115 @@ export function setPins(
   }
   if (sets.length === 0) return;
   values.push(convoyId);
-  db().prepare(`UPDATE convoys SET ${sets.join(", ")} WHERE id = ?`).run(...values);
+  await db().prepare(`UPDATE convoys SET ${sets.join(", ")} WHERE id = ?`).bind(...values).run();
 }
 
-export function createConvoy(input: {
+export async function createConvoy(input: {
   title: string;
   meetupAt: string;
   meetupPlace: string;
   destination: string;
-}): ConvoyRow {
+}): Promise<ConvoyRow> {
   const conn = db();
   let code = newConvoyCode();
   let attempts = 0;
-  while (conn.prepare("SELECT 1 FROM convoys WHERE code = ?").get(code)) {
+  while (await conn.prepare("SELECT 1 FROM convoys WHERE code = ?").bind(code).first()) {
     code = newConvoyCode();
     if (++attempts > 5) throw new Error("failed to generate unique code");
   }
   const adminToken = newSecretToken();
-  const info = conn
+  const info = await conn
     .prepare(
       `INSERT INTO convoys (code, admin_token, title, meetup_at, meetup_place, destination)
        VALUES (?, ?, ?, ?, ?, ?)`,
     )
-    .run(code, adminToken, input.title, input.meetupAt, input.meetupPlace, input.destination);
+    .bind(code, adminToken, input.title, input.meetupAt, input.meetupPlace, input.destination)
+    .run();
 
-  return conn.prepare("SELECT * FROM convoys WHERE id = ?").get(info.lastInsertRowid) as ConvoyRow;
+  const row = await conn
+    .prepare("SELECT * FROM convoys WHERE id = ?")
+    .bind(info.meta.last_row_id)
+    .first<ConvoyRow>();
+  if (!row) throw new Error("failed to read newly created convoy");
+  return row;
 }
 
-export function getConvoyByCode(code: string): ConvoyRow | null {
-  const row = db().prepare("SELECT * FROM convoys WHERE code = ?").get(code) as ConvoyRow | undefined;
-  return row ?? null;
+export async function getConvoyByCode(code: string): Promise<ConvoyRow | null> {
+  return (await db().prepare("SELECT * FROM convoys WHERE code = ?").bind(code).first<ConvoyRow>()) ?? null;
 }
 
-export function getConvoyByAdminToken(token: string): ConvoyRow | null {
-  const row = db()
-    .prepare("SELECT * FROM convoys WHERE admin_token = ?")
-    .get(token) as ConvoyRow | undefined;
-  return row ?? null;
+export async function getConvoyByAdminToken(token: string): Promise<ConvoyRow | null> {
+  return (
+    (await db()
+      .prepare("SELECT * FROM convoys WHERE admin_token = ?")
+      .bind(token)
+      .first<ConvoyRow>()) ?? null
+  );
 }
 
-export function listMembers(convoyId: number): MemberRow[] {
-  return db()
+export async function listMembers(convoyId: number): Promise<MemberRow[]> {
+  const result = await db()
     .prepare("SELECT * FROM members WHERE convoy_id = ? ORDER BY created_at ASC")
-    .all(convoyId) as MemberRow[];
+    .bind(convoyId)
+    .all<MemberRow>();
+  return result.results;
 }
 
-export function getMemberByToken(convoyId: number, token: string): MemberRow | null {
-  const row = db()
-    .prepare("SELECT * FROM members WHERE convoy_id = ? AND token = ?")
-    .get(convoyId, token) as MemberRow | undefined;
-  return row ?? null;
+export async function getMemberByToken(convoyId: number, token: string): Promise<MemberRow | null> {
+  return (
+    (await db()
+      .prepare("SELECT * FROM members WHERE convoy_id = ? AND token = ?")
+      .bind(convoyId, token)
+      .first<MemberRow>()) ?? null
+  );
 }
 
-export function requestJoin(convoyId: number, name: string): MemberRow {
-  const token = newSecretToken();
-  const info = db()
-    .prepare(
-      "INSERT INTO members (convoy_id, name, token, state) VALUES (?, ?, ?, 'pending')",
-    )
-    .run(convoyId, name, token);
-  return db().prepare("SELECT * FROM members WHERE id = ?").get(info.lastInsertRowid) as MemberRow;
-}
-
-export function setMemberState(memberId: number, convoyId: number, state: MemberState): void {
-  db()
-    .prepare("UPDATE members SET state = ? WHERE id = ? AND convoy_id = ?")
-    .run(state, memberId, convoyId);
-}
-
-export function setLeader(memberId: number | null, convoyId: number): void {
+export async function requestJoin(convoyId: number, name: string): Promise<MemberRow> {
   const conn = db();
-  const tx = conn.transaction(() => {
-    conn.prepare("UPDATE members SET is_leader = 0 WHERE convoy_id = ?").run(convoyId);
-    if (memberId !== null) {
+  const token = newSecretToken();
+  const info = await conn
+    .prepare("INSERT INTO members (convoy_id, name, token, state) VALUES (?, ?, ?, 'pending')")
+    .bind(convoyId, name, token)
+    .run();
+  const row = await conn
+    .prepare("SELECT * FROM members WHERE id = ?")
+    .bind(info.meta.last_row_id)
+    .first<MemberRow>();
+  if (!row) throw new Error("failed to read newly created member");
+  return row;
+}
+
+export async function setMemberState(
+  memberId: number,
+  convoyId: number,
+  state: MemberState,
+): Promise<void> {
+  await db()
+    .prepare("UPDATE members SET state = ? WHERE id = ? AND convoy_id = ?")
+    .bind(state, memberId, convoyId)
+    .run();
+}
+
+export async function setLeader(memberId: number | null, convoyId: number): Promise<void> {
+  const conn = db();
+  const statements = [
+    conn.prepare("UPDATE members SET is_leader = 0 WHERE convoy_id = ?").bind(convoyId),
+  ];
+  if (memberId !== null) {
+    statements.push(
       conn
         .prepare("UPDATE members SET is_leader = 1 WHERE id = ? AND convoy_id = ?")
-        .run(memberId, convoyId);
-    }
-  });
-  tx();
+        .bind(memberId, convoyId),
+    );
+  }
+  await conn.batch(statements);
 }
 
-export function upsertLocation(
+export async function upsertLocation(
   memberId: number,
   loc: { lat: number; lng: number; accuracy: number | null; heading: number | null; speed: number | null },
-): void {
-  db()
+): Promise<void> {
+  await db()
     .prepare(
       `INSERT INTO locations (member_id, lat, lng, accuracy, heading, speed, updated_at)
        VALUES (?, ?, ?, ?, ?, ?, datetime('now'))
@@ -137,7 +160,8 @@ export function upsertLocation(
          speed      = excluded.speed,
          updated_at = excluded.updated_at`,
     )
-    .run(memberId, loc.lat, loc.lng, loc.accuracy, loc.heading, loc.speed);
+    .bind(memberId, loc.lat, loc.lng, loc.accuracy, loc.heading, loc.speed)
+    .run();
 }
 
 export interface LiveLocation {
@@ -155,8 +179,9 @@ export interface LiveLocation {
 
 const LOCATION_STALE_SEC = 5 * 60;
 
-export function listLiveLocations(convoyId: number): LiveLocation[] {
-  const rows = db()
+export async function listLiveLocations(convoyId: number): Promise<LiveLocation[]> {
+  type LiveLocationRow = LocationRow & { name: string; is_leader: number; age_sec: number };
+  const result = await db()
     .prepare(
       `SELECT l.member_id, l.lat, l.lng, l.accuracy, l.heading, l.speed, l.updated_at,
               m.name, m.is_leader,
@@ -165,32 +190,31 @@ export function listLiveLocations(convoyId: number): LiveLocation[] {
          JOIN members m ON m.id = l.member_id
         WHERE m.convoy_id = ? AND m.state = 'approved'`,
     )
-    .all(convoyId) as Array<
-    LocationRow & { name: string; is_leader: number; age_sec: number }
-  >;
+    .bind(convoyId)
+    .all<LiveLocationRow>();
 
-  return rows
-    .filter((r) => r.age_sec <= LOCATION_STALE_SEC)
-    .map((r) => ({
-      memberId: r.member_id,
-      name: r.name,
-      isLeader: r.is_leader === 1,
-      lat: r.lat,
-      lng: r.lng,
-      accuracy: r.accuracy,
-      heading: r.heading,
-      speed: r.speed,
-      updatedAt: r.updated_at,
-      ageSec: r.age_sec,
+  return result.results
+    .filter((row) => row.age_sec <= LOCATION_STALE_SEC)
+    .map((row) => ({
+      memberId: row.member_id,
+      name: row.name,
+      isLeader: row.is_leader === 1,
+      lat: row.lat,
+      lng: row.lng,
+      accuracy: row.accuracy,
+      heading: row.heading,
+      speed: row.speed,
+      updatedAt: row.updated_at,
+      ageSec: row.age_sec,
     }));
 }
 
-export function updateConvoy(
+export async function updateConvoy(
   convoyId: number,
   fields: { title?: string; meetupAt?: string; meetupPlace?: string; destination?: string },
-): void {
+): Promise<void> {
   const sets: string[] = [];
-  const values: unknown[] = [];
+  const values: (string | number)[] = [];
   if (fields.title !== undefined) {
     sets.push("title = ?");
     values.push(fields.title);
@@ -209,16 +233,17 @@ export function updateConvoy(
   }
   if (sets.length === 0) return;
   values.push(convoyId);
-  db().prepare(`UPDATE convoys SET ${sets.join(", ")} WHERE id = ?`).run(...values);
+  await db().prepare(`UPDATE convoys SET ${sets.join(", ")} WHERE id = ?`).bind(...values).run();
 }
 
-export function setConvoyStatus(convoyId: number, status: ConvoyStatus): void {
+export async function setConvoyStatus(convoyId: number, status: ConvoyStatus): Promise<void> {
   if (status === "closed") {
-    db()
+    await db()
       .prepare("UPDATE convoys SET status = ?, closed_at = datetime('now') WHERE id = ?")
-      .run(status, convoyId);
+      .bind(status, convoyId)
+      .run();
   } else {
-    db().prepare("UPDATE convoys SET status = ? WHERE id = ?").run(status, convoyId);
+    await db().prepare("UPDATE convoys SET status = ? WHERE id = ?").bind(status, convoyId).run();
   }
 }
 
@@ -241,16 +266,16 @@ export interface PublicConvoyView {
   approvedCount: number;
 }
 
-export function publicViewForCode(code: string): PublicConvoyView | null {
-  const convoy = getConvoyByCode(code);
+export async function publicViewForCode(code: string): Promise<PublicConvoyView | null> {
+  const convoy = await getConvoyByCode(code);
   if (!convoy) return null;
-  const approved = listMembers(convoy.id)
-    .filter((m) => m.state === "approved")
-    .map((m) => ({
-      id: m.id,
-      name: m.name,
-      state: m.state,
-      isLeader: m.is_leader === 1,
+  const approved = (await listMembers(convoy.id))
+    .filter((member) => member.state === "approved")
+    .map((member) => ({
+      id: member.id,
+      name: member.name,
+      state: member.state,
+      isLeader: member.is_leader === 1,
     }));
   return {
     code: convoy.code,
@@ -270,16 +295,21 @@ export interface AdminConvoyView extends PublicConvoyView {
   adminToken: string;
 }
 
-export function adminViewForToken(token: string): AdminConvoyView | null {
-  const convoy = getConvoyByAdminToken(token);
+export async function adminViewForToken(token: string): Promise<AdminConvoyView | null> {
+  const convoy = await getConvoyByAdminToken(token);
   if (!convoy) return null;
-  const members = listMembers(convoy.id);
+  const members = await listMembers(convoy.id);
   const approved = members
-    .filter((m) => m.state === "approved")
-    .map((m) => ({ id: m.id, name: m.name, state: m.state, isLeader: m.is_leader === 1 }));
+    .filter((member) => member.state === "approved")
+    .map((member) => ({
+      id: member.id,
+      name: member.name,
+      state: member.state,
+      isLeader: member.is_leader === 1,
+    }));
   const pending = members
-    .filter((m) => m.state === "pending")
-    .map((m) => ({ id: m.id, name: m.name, state: m.state }));
+    .filter((member) => member.state === "pending")
+    .map((member) => ({ id: member.id, name: member.name, state: member.state }));
   return {
     code: convoy.code,
     title: convoy.title,
