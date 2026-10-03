@@ -290,7 +290,7 @@ export default function ConvoyMap({
           </button>
         )}
       </div>
-      <div ref={mapElRef} className="relative z-0 h-72 w-full rounded-xl overflow-hidden border border-slate-200" />
+      <div ref={mapElRef} className="relative z-0 h-80 w-full overflow-hidden rounded-2xl border border-slate-200 sm:h-96" />
       {locations.length > 0 && <p className="text-xs text-slate-500">Orange: leader · Blue: you · Dark: other riders. Tap a rider for the last update time.</p>}
     </div>
   );

@@ -32,6 +32,8 @@ export default function AdminClient({ initialView }: Props) {
   const [pinModal, setPinModal] = useState<"meetup" | "destination" | null>(null);
   const [pinSaving, setPinSaving] = useState(false);
   const [pinError, setPinError] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionBusy, setActionBusy] = useState(false);
 
   const refresh = useCallback(async () => {
     setRefreshing(true);
@@ -79,6 +81,10 @@ export default function AdminClient({ initialView }: Props) {
   }, [view.status, refreshLocations]);
 
   async function act(path: string, body?: Record<string, unknown>) {
+    if (actionBusy) return;
+    setActionBusy(true);
+    setActionError(null);
+    try {
     const res = await fetch(`/api/admin/${view.adminToken}${path}`, {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -87,8 +93,11 @@ export default function AdminClient({ initialView }: Props) {
     if (res.ok) await refresh();
     else {
       const err = await res.json().catch(() => ({}));
-      alert(err.error ?? "Action failed");
+      throw new Error(err.error ?? "Action failed. Try again.");
     }
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : "Could not update the convoy. Check your connection and try again.");
+    } finally { setActionBusy(false); }
   }
 
   async function savePin(kind: "meetup" | "destination", value: LatLng | null) {
@@ -120,13 +129,18 @@ export default function AdminClient({ initialView }: Props) {
   const joinUrl = typeof window === "undefined" ? "" : `${window.location.origin}/c/${view.code}`;
 
   return (
-    <section className="space-y-5">
+    <section className="convoy-page">
       <div className="space-y-1">
         <div className="flex items-center gap-2">
           <span className={status.cls}>{status.text}</span>
           <span className="text-xs text-slate-400">creator view · code {view.code}</span>
         </div>
-        <h1 className="text-2xl font-bold tracking-tight">{view.title}</h1>
+        <h1 className="break-words pt-2 text-3xl font-bold tracking-tight">{view.title}</h1>
+        <div className="grid grid-cols-3 gap-2 pt-4" aria-label="Convoy overview">
+          {[[view.pending.length, "Waiting"], [view.approved.length, "Approved"], [locations.length, "Sharing"]].map(([count, label]) => (
+            <div className="card text-center" key={label}><p className="text-2xl font-bold">{count}</p><p className="mt-1 text-xs text-slate-600">{label}</p></div>
+          ))}
+        </div>
       </div>
 
       <ShareCard joinUrl={joinUrl} />
@@ -157,6 +171,7 @@ export default function AdminClient({ initialView }: Props) {
       )}
 
       <StatusControls
+        busy={actionBusy}
         status={view.status}
         onActive={() => act("/status", { status: "active" })}
         onClose={() => {
@@ -164,6 +179,8 @@ export default function AdminClient({ initialView }: Props) {
         }}
         onReplan={() => act("/status", { status: "planned" })}
       />
+      {actionBusy && <p role="status" className="text-sm text-slate-600">Updating your convoy…</p>}
+      {actionError && <p role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{actionError}</p>}
 
       <PendingList
         pending={view.pending}
@@ -318,11 +335,13 @@ function ShareCard({ joinUrl }: { joinUrl: string }) {
 }
 
 function StatusControls({
+  busy,
   status,
   onActive,
   onClose,
   onReplan,
 }: {
+  busy: boolean;
   status: AdminConvoyView["status"];
   onActive: () => void;
   onClose: () => void;
@@ -337,25 +356,25 @@ function StatusControls({
   }
   if (status === "active") {
     return (
-      <div className="flex gap-2">
+      <fieldset disabled={busy} className="flex gap-2">
         <button onClick={onReplan} className="btn-secondary flex-1">
           Back to planned
         </button>
         <button onClick={onClose} className="btn-danger flex-1">
           Close convoy
         </button>
-      </div>
+      </fieldset>
     );
   }
   return (
-    <div className="flex gap-2">
+    <fieldset disabled={busy} className="flex gap-2">
       <button onClick={onActive} className="btn-primary flex-1">
         Start ride
       </button>
       <button onClick={onClose} className="btn-secondary flex-1">
         Close
       </button>
-    </div>
+    </fieldset>
   );
 }
 
@@ -428,7 +447,7 @@ function ApprovedList({
       ) : (
         <ul className="space-y-1.5">
           {approved.map((m) => (
-            <li key={m.id} className="card flex items-center justify-between gap-2 py-2.5">
+            <li key={m.id} className="card flex flex-wrap items-center justify-between gap-2 py-2.5">
               <span className="flex-1 font-medium text-slate-800">
                 {m.name}
                 {m.isLeader && <span className="ml-2 text-xs text-accent">★ leader</span>}
@@ -511,12 +530,13 @@ function EditCard({
   return (
     <form onSubmit={save} className="card space-y-3">
       <div>
-        <label className="label">Title</label>
-        <input name="title" defaultValue={view.title} className="input" maxLength={80} required />
+        <label htmlFor="edit-title" className="label">Title</label>
+        <input id="edit-title" name="title" defaultValue={view.title} className="input" maxLength={80} required />
       </div>
       <div>
-        <label className="label">Meetup time</label>
+        <label htmlFor="edit-time" className="label">Meetup time</label>
         <input
+          id="edit-time"
           name="meetupAt"
           type="datetime-local"
           defaultValue={toLocalDatetime(view.meetup_at)}
@@ -525,8 +545,9 @@ function EditCard({
         />
       </div>
       <div>
-        <label className="label">Meetup place</label>
+        <label htmlFor="edit-meetup" className="label">Meetup place</label>
         <input
+          id="edit-meetup"
           name="meetupPlace"
           defaultValue={view.meetup_place}
           className="input"
@@ -535,8 +556,9 @@ function EditCard({
         />
       </div>
       <div>
-        <label className="label">Destination</label>
+        <label htmlFor="edit-destination" className="label">Destination</label>
         <input
+          id="edit-destination"
           name="destination"
           defaultValue={view.destination}
           className="input"

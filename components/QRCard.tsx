@@ -13,6 +13,7 @@ export default function QRCard({ url, label, size = 240 }: Props) {
   const [svg, setSvg] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
   const [downloading, setDownloading] = useState(false);
+  const [copyError, setCopyError] = useState(false);
   const containerRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
@@ -36,12 +37,13 @@ export default function QRCard({ url, label, size = 240 }: Props) {
   }, [url, size]);
 
   async function copyLink() {
+    setCopyError(false);
     try {
       await navigator.clipboard.writeText(url);
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      /* ignore */
+      setCopyError(true);
     }
   }
 
@@ -50,8 +52,8 @@ export default function QRCard({ url, label, size = 240 }: Props) {
       try {
         await navigator.share({ url, title: "Join my convoy" });
         return;
-      } catch {
-        /* user cancelled — fall through to copy */
+      } catch (error) {
+        if (error instanceof Error && error.name === "AbortError") return;
       }
     }
     copyLink();
@@ -134,6 +136,7 @@ export default function QRCard({ url, label, size = 240 }: Props) {
           {downloading ? "…" : "PNG"}
         </button>
       </div>
+      {copyError && <p role="alert" className="text-sm text-red-700">Couldn’t copy the link. Select the link above to copy it manually.</p>}
     </div>
   );
 }

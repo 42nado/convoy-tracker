@@ -107,16 +107,16 @@ export default function ConvoyClient({ initialView, initialMe }: Props) {
   const status = statusLabel(view.status);
 
   return (
-    <section className="space-y-5">
+    <section className="convoy-page">
       <div className="space-y-1">
         <div className="flex items-center gap-2">
           <span className={status.cls}>{status.text}</span>
           <span className="text-xs text-slate-400">code · {view.code}</span>
         </div>
-        <h1 className="text-2xl font-bold tracking-tight">{view.title}</h1>
+        <h1 className="break-words pt-2 text-3xl font-bold tracking-tight">{view.title}</h1>
       </div>
 
-      <div className="card space-y-3">
+      <div className="ride-summary">
         <Row label="When" value={formatMeetup(view.meetup_at)} />
         <Row label="Meetup" value={view.meetup_place} />
         <Row label="Destination" value={view.destination} />
@@ -263,10 +263,14 @@ function JoinPanel({
 
   async function leave() {
     if (!confirm("Leave this convoy?")) return;
+    setError(null);
     setBusy(true);
     try {
       const res = await fetch(`/api/convoys/${code}/leave`, { method: "POST" });
-      if (res.ok) onChange(null);
+      if (!res.ok) throw new Error("Could not leave the convoy. Try again.");
+      onChange(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not leave the convoy. Check your connection.");
     } finally {
       setBusy(false);
     }
@@ -309,6 +313,7 @@ function JoinPanel({
         <button onClick={leave} disabled={busy} className="btn-ghost w-full text-sm">
           Cancel request
         </button>
+        {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
       </div>
     );
   }
@@ -322,6 +327,7 @@ function JoinPanel({
         <button onClick={leave} disabled={busy} className="btn-ghost w-full text-sm">
           Leave convoy
         </button>
+        {error && <p role="alert" className="text-sm text-red-700">{error}</p>}
       </div>
     );
   }
