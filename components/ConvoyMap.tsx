@@ -96,6 +96,7 @@ export default function ConvoyMap({
   const meetupMarkerRef = useRef<L.Marker | null>(null);
   const destMarkerRef = useRef<L.Marker | null>(null);
   const routeLayersRef = useRef<Map<string, L.Polyline>>(new Map());
+  const routePointsRef = useRef<Map<string, [number, number][]>>(new Map());
   const fittedRef = useRef(false);
   const fittedMembersRef = useRef<Set<number>>(new Set());
   const fittedLeaderRef = useRef<number | null>(null);
@@ -105,6 +106,7 @@ export default function ConvoyMap({
     const points: L.LatLngTuple[] = locations.map((location) => [location.lat, location.lng]);
     if (meetup) points.push([meetup.lat, meetup.lng]);
     if (destination) points.push([destination.lat, destination.lng]);
+    for (const route of routes ?? []) points.push(...route.points);
     if (points.length) mapRef.current?.fitBounds(L.latLngBounds(points).pad(0.2), { maxZoom: 15 });
   }
 
@@ -130,6 +132,7 @@ export default function ConvoyMap({
       meetupMarkerRef.current = null;
       destMarkerRef.current = null;
       routeLayersRef.current.clear();
+      routePointsRef.current.clear();
       fittedRef.current = false;
       fittedMembersRef.current.clear();
       fittedLeaderRef.current = null;
@@ -169,15 +172,19 @@ export default function ConvoyMap({
     const map = mapRef.current;
     if (!map) return;
     const incoming = new Map((routes ?? []).map((r) => [r.id, r] as const));
+    let geometryChanged = false;
     // Remove dropped
     for (const [id, layer] of routeLayersRef.current) {
       if (!incoming.has(id)) {
         layer.remove();
         routeLayersRef.current.delete(id);
+        routePointsRef.current.delete(id);
       }
     }
     // Add or update
     for (const [id, r] of incoming) {
+      if (routePointsRef.current.get(id) !== r.points) geometryChanged = true;
+      routePointsRef.current.set(id, r.points);
       const existing = routeLayersRef.current.get(id);
       if (existing) {
         existing.setLatLngs(r.points);
@@ -191,6 +198,12 @@ export default function ConvoyMap({
         }).addTo(map);
         routeLayersRef.current.set(id, layer);
       }
+    }
+    // Include the full path, especially a rider's starting point outside the meetup view.
+    // Do this only for new geometry so roster updates don't interrupt map exploration.
+    if (geometryChanged) {
+      const points = [...incoming.values()].flatMap((route) => route.points);
+      if (points.length) map.fitBounds(L.latLngBounds(points).pad(0.15), { maxZoom: 15 });
     }
   }, [routes]);
 
@@ -291,6 +304,12 @@ export default function ConvoyMap({
         )}
       </div>
       <div ref={mapElRef} className="relative z-0 h-80 w-full overflow-hidden rounded-2xl border border-slate-200 sm:h-96" />
+      {!!routes?.length && (
+        <p className="text-xs text-slate-600">
+          {routes.some((route) => route.id === "to-meetup") && "Blue dashed path: your route to the meetup. "}
+          {routes.some((route) => route.id === "convoy") && "Orange path: meetup to destination."}
+        </p>
+      )}
       {locations.length > 0 && <p className="text-xs text-slate-500">Orange: leader · Blue: you · Dark: other riders. Tap a rider for the last update time.</p>}
     </div>
   );

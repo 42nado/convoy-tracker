@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import type { LatLng } from "@/lib/db";
 import type { ConvoyPins } from "@/lib/queries";
@@ -55,6 +55,19 @@ export default function LeaderControls({ code, pins, onPinsChanged, onRoutesChan
   const [meetupRoutePts, setMeetupRoutePts] = useState<[number, number][] | null>(null);
   const [convoyRoutePts, setConvoyRoutePts] = useState<[number, number][] | null>(null);
   const [loadingRoute, setLoadingRoute] = useState<"meetup" | "convoy" | null>(null);
+  const routeRequestRef = useRef(0);
+
+  useEffect(() => {
+    routeRequestRef.current += 1;
+    setLoadingRoute(null);
+    setMeetupRoutePts(null);
+    setMeetupRouteStats(null);
+    setConvoyRoutePts(null);
+    setConvoyRouteStats(null);
+    setShowMeetupRoute(false);
+    setShowConvoyRoute(false);
+    onRoutesChange([]);
+  }, [pins.meetup?.lat, pins.meetup?.lng, pins.destination?.lat, pins.destination?.lng, onRoutesChange]);
 
   async function savePin(kind: "meetup" | "destination", value: LatLng | null) {
     setSaving(true);
@@ -107,6 +120,7 @@ export default function LeaderControls({ code, pins, onPinsChanged, onRoutesChan
   );
 
   async function loadRoute(kind: "meetup" | "convoy") {
+    const request = ++routeRequestRef.current;
     setLoadingRoute(kind);
     setError(null);
     try {
@@ -114,12 +128,14 @@ export default function LeaderControls({ code, pins, onPinsChanged, onRoutesChan
       if (kind === "meetup") {
         if (!pins.meetup) throw new Error("Pin the meetup first");
         const here = myLocation ?? (await getCurrentLocation());
+        if (request !== routeRequestRef.current) return;
         if (!myLocation) setMyLocation(here);
         result = await fetchRoute(here, pins.meetup);
       } else {
         if (!pins.meetup || !pins.destination) throw new Error("Need both meetup and destination pins");
         result = await fetchRoute(pins.meetup, pins.destination);
       }
+      if (request !== routeRequestRef.current) return;
       if (kind === "meetup") {
         setMeetupRoutePts(result.points);
         setMeetupRouteStats({ distance: result.distance, duration: result.duration, routed: result.routed });
@@ -132,9 +148,9 @@ export default function LeaderControls({ code, pins, onPinsChanged, onRoutesChan
         refreshRoutes(meetupRoutePts, result.points, showMeetupRoute, true);
       }
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not compute route");
+      if (request === routeRequestRef.current) setError(e instanceof Error ? e.message : "Could not compute route");
     } finally {
-      setLoadingRoute(null);
+      if (request === routeRequestRef.current) setLoadingRoute(null);
     }
   }
 
